@@ -13,7 +13,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    LabeledPrice, PreCheckoutQuery, ContentType
+    LabeledPrice, PreCheckoutQuery, ContentType, ReplyKeyboardMarkup, KeyboardButton,
+    ChatMemberStatus
 )
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -28,6 +29,13 @@ if not BOT_TOKEN:
 
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(",") if admin_id.strip()]
+
+# Обязательная подписка
+REQUIRED_CHANNEL = "@SharkOfDark"
+REQUIRED_CHANNEL_ID = "@SharkOfDark"  # Или ID канала -100...
+
+# Создатель бота
+BOT_CREATOR = "@ecronx"
 
 # Настройка логирования
 logging.basicConfig(
@@ -87,7 +95,10 @@ class Database:
             "categories": {"Без категории": "Без категории"},
             "orders": [],
             "pending_orders": [],
-            "stats": {"total_orders": 0, "total_revenue": 0}
+            "stats": {"total_orders": 0, "total_revenue": 0},
+            "subscribed_users": [],  # Список пользователей, прошедших проверку подписки
+            "referrals": {},  # Реферальная система: {user_id: [список рефералов]}
+            "promo_codes": {}  # Промокоды: {code: {"discount": 10, "uses": 0, "max_uses": 100}}
         }
 
     def save(self):
@@ -237,6 +248,32 @@ class Database:
 
     def get_start_message(self):
         return self.data["start_message"]
+    
+    def is_user_subscribed(self, user_id):
+        """Проверка, прошел ли пользователь проверку подписки"""
+        return user_id in self.data.get("subscribed_users", [])
+    
+    def add_subscribed_user(self, user_id):
+        """Добавить пользователя в список подписавшихся"""
+        if "subscribed_users" not in self.data:
+            self.data["subscribed_users"] = []
+        if user_id not in self.data["subscribed_users"]:
+            self.data["subscribed_users"].append(user_id)
+            self.save()
+    
+    def add_referral(self, referrer_id, referred_id):
+        """Добавить реферала"""
+        if "referrals" not in self.data:
+            self.data["referrals"] = {}
+        if referrer_id not in self.data["referrals"]:
+            self.data["referrals"][referrer_id] = []
+        if referred_id not in self.data["referrals"][referrer_id]:
+            self.data["referrals"][referrer_id].append(referred_id)
+            self.save()
+    
+    def get_referrals(self, user_id):
+        """Получить список рефералов"""
+        return self.data.get("referrals", {}).get(user_id, [])
 
 
 db = Database()
@@ -260,6 +297,16 @@ class AdminStates(StatesGroup):
 
 # ============= КЛАВИАТУРЫ =============
 PRODUCTS_PER_PAGE = 5
+
+def get_main_reply_keyboard():
+    """Главная Reply клавиатура после подписки"""
+    keyboard = [
+        [KeyboardButton(text="🛍️ Каталог товаров"), KeyboardButton(text="🎁 Получить подарок")],
+        [KeyboardButton(text="📜 Мои заказы"), KeyboardButton(text="🎯 Реферальная программа")],
+        [KeyboardButton(text="❓ FAQ"), KeyboardButton(text="💬 Поддержка")],
+        [KeyboardButton(text="ℹ️ О боте")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 def get_main_keyboard(page=0, category="Все"):
     products = db.get_products(category if category != "Все" else None)
@@ -325,8 +372,7 @@ def get_admin_keyboard():
         [InlineKeyboardButton(text="📋 Список товаров", callback_data="admin_list_products")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="📦 Заказы", callback_data="admin_orders")],
-        [InlineKeyboardButton(text=pending_text, callback_data="admin_pending_orders")],
-        [InlineKeyboardButton(text="✏️ Изменить /start", callback_data="admin_edit_start")]
+        [InlineKeyboardButton(text=pending_text, callback_data="admin_pending_orders")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -356,40 +402,112 @@ def is_admin(user_id: int) -> bool:
 
 
 # ============= ОБРАБОТЧИКИ =============
+async def check_subscription(bot: Bot, user_id: int) -> bool:
+    """Проверка подписки на канал"""
+    try:
+        member = await bot.get_chat_member(chat_id=REQUIRED_CHANNEL_ID, user_id=user_id)
+        return member.status in [ChatMemberStatus.CREATOR, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.MEMBER]
+    except Exception as e:
+        logger.error(f"Ошибка проверки подписки: {e}")
+        return False
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     try:
-        start_msg = db.get_start_message()
-        keyboard = get_main_keyboard()
-
-        if start_msg["media_type"] and start_msg["media_id"]:
-            if start_msg["media_type"] == "photo":
-                await message.answer_photo(
-                    photo=start_msg["media_id"],
-                    caption=start_msg["text"],
+        user_id = message.from_user.id
+        
+        # Проверяем, прошел ли пользователь проверку подписки ранее
+        if not db.is_user_subscribed(user_id):
+            # Проверяем подписку на канал
+            is_subscribed = await check_subscription(message.bot, user_id)
+            
+            if not is_subscribed:
+                # Показываем сообщение с требованием подписки
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="📢 Подписаться на канал", url=f"https://t.me/{REQUIRED_CHANNEL.replace('@', '')}")],
+                    [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_subscription")]
+                ])
+                
+                await message.answer(
+                    "📢 <b>Чтобы получить доступ к боту, подпишитесь на наш канал!</b>\n\n"
+                    f"👉 {REQUIRED_CHANNEL}\n\n"
+                    "После подписки нажмите кнопку <b>\"Проверить\"</b>",
                     reply_markup=keyboard,
                     parse_mode=ParseMode.HTML
                 )
-            elif start_msg["media_type"] == "video":
-                await message.answer_video(
-                    video=start_msg["media_id"],
-                    caption=start_msg["text"],
-                    reply_markup=keyboard,
-                    parse_mode=ParseMode.HTML
-                )
-            elif start_msg["media_type"] == "animation":
-                await message.answer_animation(
-                    animation=start_msg["media_id"],
-                    caption=start_msg["text"],
-                    reply_markup=keyboard,
-                    parse_mode=ParseMode.HTML
-                )
-        else:
-            await message.answer(start_msg["text"], reply_markup=keyboard, parse_mode=ParseMode.HTML)
-        logger.info(f"Пользователь {message.from_user.id} использовал /start")
+                logger.info(f"Пользователь {user_id} не подписан на канал")
+                return
+            else:
+                # Пользователь подписан, добавляем в БД
+                db.add_subscribed_user(user_id)
+        
+        # Пользователь подписан - показываем приветствие
+        welcome_text = (
+            "🎉 <b>Добро пожаловать в бота Shark Of Buy!</b>\n\n"
+            "⚡ <i>Быстро</i> • 🔒 <i>Надежно</i> • ✅ <i>Безопасно</i>\n\n"
+            "📋 <b>Доступные команды:</b>\n"
+            "🛍️ /buy - Каталог товаров\n"
+            "📜 /myorders - Мои заказы\n"
+            "🎯 /referral - Реферальная программа\n"
+            "❓ /faq - Частые вопросы\n"
+            "💬 /support - Поддержка\n"
+            "❓ /help - Справка\n\n"
+            f"👨‍💻 <b>Создатель:</b> {BOT_CREATOR}"
+        )
+        
+        await message.answer(
+            welcome_text,
+            reply_markup=get_main_reply_keyboard(),
+            parse_mode=ParseMode.HTML
+        )
+        logger.info(f"Пользователь {user_id} использовал /start")
+        
     except Exception as e:
-        logger.error(f"Ошибка в /start: {e}")
+        logger.error(f"Ошибка в /start: {e}", exc_info=True)
         await message.answer("❌ Произошла ошибка. Попробуйте позже.")
+
+
+@router.callback_query(F.data == "check_subscription")
+async def process_check_subscription(callback: CallbackQuery):
+    """Обработка проверки подписки"""
+    try:
+        user_id = callback.from_user.id
+        is_subscribed = await check_subscription(callback.bot, user_id)
+        
+        if is_subscribed:
+            # Пользователь подписан!
+            db.add_subscribed_user(user_id)
+            
+            welcome_text = (
+                "🎉 <b>Добро пожаловать в бота Shark Of Buy!</b>\n\n"
+                "⚡ <i>Быстро</i> • 🔒 <i>Надежно</i> • ✅ <i>Безопасно</i>\n\n"
+                "📋 <b>Доступные команды:</b>\n"
+                "🛍️ /buy - Каталог товаров\n"
+                "📜 /myorders - Мои заказы\n"
+                "🎯 /referral - Реферальная программа\n"
+                "❓ /faq - Частые вопросы\n"
+                "💬 /support - Поддержка\n"
+                "❓ /help - Справка\n\n"
+                f"👨‍💻 <b>Создатель:</b> {BOT_CREATOR}"
+            )
+            
+            await callback.message.delete()
+            await callback.message.answer(
+                welcome_text,
+                reply_markup=get_main_reply_keyboard(),
+                parse_mode=ParseMode.HTML
+            )
+            logger.info(f"Пользователь {user_id} успешно подписался")
+        else:
+            await callback.answer(
+                "❌ Вы еще не подписались на канал!\n\n"
+                f"Подпишитесь на {REQUIRED_CHANNEL} и попробуйте снова.",
+                show_alert=True
+            )
+    except Exception as e:
+        logger.error(f"Ошибка проверки подписки: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка проверки. Попробуйте позже.", show_alert=True)
 
 
 @router.message(Command("help"))
@@ -410,7 +528,20 @@ async def cmd_help(message: Message):
     await message.answer(help_text, parse_mode=ParseMode.HTML)
 
 
+@router.message(Command("buy"))
+@router.message(F.text == "🛍️ Каталог товаров")
+async def cmd_buy(message: Message):
+    """Показать каталог товаров"""
+    keyboard = get_main_keyboard()
+    await message.answer(
+        "🛍️ <b>Каталог товаров</b>\n\nВыберите товар:",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
+
+
 @router.message(Command("myorders"))
+@router.message(F.text == "📜 Мои заказы")
 async def cmd_my_orders(message: Message):
     orders = db.get_user_orders(message.from_user.id)
     if not orders:
@@ -420,9 +551,119 @@ async def cmd_my_orders(message: Message):
     text = "📜 <b>Ваши заказы:</b>\n\n"
     for i, order in enumerate(reversed(orders[-10:]), 1):  # Последние 10 заказов
         date = datetime.fromisoformat(order["date"]).strftime("%d.%m.%Y %H:%M")
-        text += f"{i}. {order['product_name']} - {order['price']} ⭐\n   📅 {date}\n\n"
+        status_emoji = "✅" if order.get("status") == "completed" else "⏳"
+        text += f"{i}. {status_emoji} {order['product_name']} - {order['price']} ⭐\n   📅 {date}\n\n"
     
     await message.answer(text, parse_mode=ParseMode.HTML)
+
+
+@router.message(Command("referral"))
+@router.message(F.text == "🎯 Реферальная программа")
+async def cmd_referral(message: Message):
+    """Реферальная программа"""
+    user_id = message.from_user.id
+    referrals = db.get_referrals(user_id)
+    referral_link = f"https://t.me/{(await message.bot.get_me()).username}?start=ref_{user_id}"
+    
+    text = (
+        "🎯 <b>Реферальная программа</b>\n\n"
+        "🎁 Приглашайте друзей и получайте бонусы!\n\n"
+        f"👥 Ваших рефералов: <b>{len(referrals)}</b>\n\n"
+        f"🔗 <b>Ваша реферальная ссылка:</b>\n"
+        f"<code>{referral_link}</code>\n\n"
+        "💡 <i>За каждого друга вы получите бонус!</i>"
+    )
+    
+    await message.answer(text, parse_mode=ParseMode.HTML)
+
+
+@router.message(Command("faq"))
+@router.message(F.text == "❓ FAQ")
+async def cmd_faq(message: Message):
+    """Частые вопросы"""
+    text = (
+        "❓ <b>Частые вопросы (FAQ)</b>\n\n"
+        "<b>Q: Как купить товар?</b>\n"
+        "A: Выберите товар из каталога и оплатите звездами Telegram.\n\n"
+        "<b>Q: Что такое звезды Telegram?</b>\n"
+        "A: Это внутренняя валюта Telegram для оплаты.\n\n"
+        "<b>Q: Как получить товар?</b>\n"
+        "A: После оплаты товар придет автоматически или вручную от админа.\n\n"
+        "<b>Q: Можно ли вернуть деньги?</b>\n"
+        "A: Обратитесь в поддержку для решения вопроса.\n\n"
+        f"💬 <b>Остались вопросы?</b> Напишите: {BOT_CREATOR}"
+    )
+    
+    await message.answer(text, parse_mode=ParseMode.HTML)
+
+
+@router.message(Command("support"))
+@router.message(F.text == "💬 Поддержка")
+async def cmd_support(message: Message):
+    """Поддержка"""
+    text = (
+        "💬 <b>Поддержка</b>\n\n"
+        f"По всем вопросам обращайтесь к создателю:\n"
+        f"👨‍💻 {BOT_CREATOR}\n\n"
+        "⏰ Время ответа: обычно в течение 24 часов"
+    )
+    
+    await message.answer(text, parse_mode=ParseMode.HTML)
+
+
+@router.message(F.text == "ℹ️ О боте")
+async def cmd_about(message: Message):
+    """О боте"""
+    text = (
+        "ℹ️ <b>О боте Shark Of Buy</b>\n\n"
+        "🤖 Автоматизированный магазин для покупки товаров и услуг\n\n"
+        "✨ <b>Особенности:</b>\n"
+        "• ⚡ Мгновенная доставка\n"
+        "• 🔒 Безопасные платежи\n"
+        "• 💎 Качественные товары\n"
+        "• 🎁 Бонусы и подарки\n"
+        "• 🎯 Реферальная программа\n\n"
+        f"👨‍💻 <b>Создатель:</b> {BOT_CREATOR}\n"
+        f"📢 <b>Канал:</b> {REQUIRED_CHANNEL}"
+    )
+    
+    await message.answer(text, parse_mode=ParseMode.HTML)
+
+
+@router.message(F.text == "🎁 Получить подарок")
+async def cmd_get_gift(message: Message):
+    """Получить платный подарок (мишка)"""
+    text = (
+        "🎁 <b>Получите подарок-мишку от бота!</b>\n\n"
+        "🧸 Заплатите <b>20 звезд</b>, чтобы получить подарок мишку от бота!\n\n"
+        "💝 Это отличный способ порадовать себя или друга!"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎁 Купить подарок за 20 ⭐", callback_data="buy_gift_bear")]
+    ])
+    
+    await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+
+@router.callback_query(F.data == "buy_gift_bear")
+async def process_buy_gift(callback: CallbackQuery):
+    """Обработка покупки подарка"""
+    try:
+        prices = [LabeledPrice(label="Подарок мишка 🧸", amount=20)]
+        
+        await callback.message.answer_invoice(
+            title="🎁 Подарок мишка",
+            description="Получите подарок-мишку от бота Shark Of Buy!",
+            payload="gift_bear",
+            provider_token="",
+            currency="XTR",
+            prices=prices
+        )
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"Ошибка при покупке подарка: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
 
 
 @router.message(Command("admin"))
@@ -658,8 +899,42 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
 async def process_successful_payment(message: Message):
     try:
         payment = message.successful_payment
-        # Получаем ID товара из payload
-        product_id = payment.invoice_payload.replace("product_", "")
+        payload = payment.invoice_payload
+        
+        # Проверяем, это подарок или товар
+        if payload == "gift_bear":
+            # Отправляем подарок мишку
+            await message.answer(
+                "🎉 <b>Спасибо за покупку подарка!</b>\n\n"
+                "Вот ваш подарок:",
+                parse_mode=ParseMode.HTML
+            )
+            
+            # Отправляем gift с подписью
+            await message.answer_gift(
+                gift_id="7876657539541926320",  # ID подарка мишка
+                text="@SharkBuy_rebot - лучший бот для покупки различных товаров!",
+                text_parse_mode=ParseMode.HTML
+            )
+            
+            logger.info(f"Подарок мишка выдан пользователю {message.from_user.id}")
+            
+            # Уведомляем админов
+            for admin_id in ADMIN_IDS:
+                try:
+                    await message.bot.send_message(
+                        admin_id,
+                        f"🎁 <b>Продан подарок мишка!</b>\n\n"
+                        f"Покупатель: @{message.from_user.username or message.from_user.id}\n"
+                        f"Цена: 20 ⭐",
+                        parse_mode=ParseMode.HTML
+                    )
+                except:
+                    pass
+            return
+        
+        # Обычный товар
+        product_id = payload.replace("product_", "")
         logger.info(f"Успешная оплата: product_id={product_id}, user_id={message.from_user.id}")
 
         product = db.get_product(product_id)
