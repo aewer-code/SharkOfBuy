@@ -462,8 +462,23 @@ async def process_buy(callback: CallbackQuery):
 
         await callback.answer()
 
-        # Разрешаем цену 0 для тестов
-        price = max(1, product["price"])  # Telegram требует минимум 1 звезду для XTR
+        # БЕСПЛАТНАЯ ВЫДАЧА для товаров за 0 звезд
+        if product["price"] == 0:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🎁 Получить бесплатно", callback_data=f"get_free_{product_id}")]
+            ])
+            await callback.message.answer(
+                f"🎁 <b>Бесплатный товар!</b>\n\n"
+                f"🛍 Товар: {product['name']}\n"
+                f"💰 Цена: БЕСПЛАТНО\n\n"
+                f"Нажмите кнопку ниже, чтобы получить товар:",
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML
+            )
+            return
+
+        # Обычная оплата для платных товаров
+        price = max(1, product["price"])
         prices = [LabeledPrice(label=product["name"], amount=price)]
 
         await callback.message.answer_invoice(
@@ -476,6 +491,85 @@ async def process_buy(callback: CallbackQuery):
         )
     except Exception as e:
         logger.error(f"Ошибка при покупке: {e}")
+        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+
+
+@router.callback_query(F.data.startswith("get_free_"))
+async def process_get_free(callback: CallbackQuery):
+    """Бесплатная выдача товара за 0 звезд"""
+    try:
+        product_id = callback.data.replace("get_free_", "")
+        product = db.get_product(product_id)
+
+        if not product:
+            await callback.answer("❌ Товар не найден!", show_alert=True)
+            return
+
+        if product["price"] != 0:
+            await callback.answer("❌ Этот товар не бесплатный!", show_alert=True)
+            return
+
+        await callback.answer()
+        delivery_type = product.get("delivery_type", "auto")
+
+        await callback.message.answer(
+            f"✅ <b>Вы получили бесплатный товар!</b>\n\n"
+            f"Товар: {product['name']}\n"
+            f"Цена: БЕСПЛАТНО 🎁",
+            parse_mode=ParseMode.HTML
+        )
+
+        if delivery_type == "manual":
+            pending = db.add_pending_order(
+                callback.from_user.id,
+                callback.from_user.username or "Без username",
+                product_id,
+                product["name"],
+                0
+            )
+            
+            await callback.message.answer(
+                "⏳ <b>Ваш заказ принят!</b>\n\n"
+                "Товар будет выдан вручную администратором.",
+                parse_mode=ParseMode.HTML
+            )
+
+            for admin_id in ADMIN_IDS:
+                try:
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="✅ Выдать товар", callback_data=f"deliver_{pending['order_id']}")]
+                    ])
+                    await callback.bot.send_message(
+                        admin_id,
+                        f"🔔 <b>Бесплатный заказ!</b>\n\n"
+                        f"Товар: {product['name']}\n"
+                        f"Покупатель: @{callback.from_user.username or callback.from_user.id}",
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=keyboard
+                    )
+                except:
+                    pass
+
+            db.add_order(callback.from_user.id, callback.from_user.username or "Без username",
+                        product_id, product["name"], 0, status="pending")
+        else:
+            material = product["material"]
+            if material["type"] == "text":
+                await callback.message.answer(f"📄 <b>Ваш материал:</b>\n\n{material['content']}", parse_mode=ParseMode.HTML)
+            elif material["type"] == "file":
+                await callback.message.answer_document(document=material["file_id"], caption="📄 Ваш материал")
+            elif material["type"] == "photo":
+                await callback.message.answer_photo(photo=material["file_id"], caption="📄 Ваш материал")
+            elif material["type"] == "video":
+                await callback.message.answer_video(video=material["file_id"], caption="📄 Ваш материал")
+
+            db.add_order(callback.from_user.id, callback.from_user.username or "Без username",
+                        product_id, product["name"], 0, status="completed")
+
+        db.decrease_stock(product_id)
+        logger.info(f"Бесплатный товар {product_id} выдан {callback.from_user.id}")
+    except Exception as e:
+        logger.error(f"Ошибка бесплатной выдачи: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка: {str(e)}")
 
 
