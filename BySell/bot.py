@@ -29,6 +29,9 @@ if not BOT_TOKEN:
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(",") if admin_id.strip()]
 
+# CryptoBot API (опционально)
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN", "")  # Токен от @CryptoBot
+
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -462,6 +465,37 @@ async def process_buy(callback: CallbackQuery):
 
         await callback.answer()
 
+        # Предлагаем выбор способа оплаты
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⭐ Telegram Stars", callback_data=f"pay_stars_{product_id}")],
+            [InlineKeyboardButton(text="💎 Криптовалюта (USDT)", callback_data=f"pay_crypto_{product_id}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")]
+        ])
+
+        await callback.message.answer(
+            f"💳 <b>Выберите способ оплаты</b>\n\n"
+            f"🛍 Товар: {product['name']}\n"
+            f"💰 Цена: {product['price']} ⭐ (~{round(product['price'] * 0.018, 2)} USDT)",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при покупке: {e}")
+        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+
+
+@router.callback_query(F.data.startswith("pay_stars_"))
+async def process_pay_stars(callback: CallbackQuery):
+    try:
+        product_id = callback.data.replace("pay_stars_", "")
+        product = db.get_product(product_id)
+
+        if not product:
+            await callback.answer("❌ Товар не найден!", show_alert=True)
+            return
+
+        await callback.answer()
+
         # Разрешаем цену 0 для тестов
         price = max(1, product["price"])  # Telegram требует минимум 1 звезду для XTR
         prices = [LabeledPrice(label=product["name"], amount=price)]
@@ -475,8 +509,102 @@ async def process_buy(callback: CallbackQuery):
             prices=prices
         )
     except Exception as e:
-        logger.error(f"Ошибка при покупке: {e}")
+        logger.error(f"Ошибка при оплате Stars: {e}")
         await callback.message.answer(f"❌ Ошибка: {str(e)}")
+
+
+@router.callback_query(F.data.startswith("pay_crypto_"))
+async def process_pay_crypto(callback: CallbackQuery):
+    try:
+        product_id = callback.data.replace("pay_crypto_", "")
+        product = db.get_product(product_id)
+
+        if not product:
+            await callback.answer("❌ Товар не найден!", show_alert=True)
+            return
+
+        if not CRYPTOBOT_TOKEN:
+            await callback.answer(
+                "❌ Крипто-оплата временно недоступна!\n"
+                "Используйте Telegram Stars.",
+                show_alert=True
+            )
+            return
+
+        await callback.answer()
+
+        # Создаём инвойс через CryptoBot
+        # Конвертируем Stars в USDT (примерно 1 Star = 0.018 USDT)
+        price_usdt = round(product["price"] * 0.018, 2)
+        
+        # Формируем ссылку на оплату через CryptoBot
+        # (здесь упрощённая версия, полная интеграция требует aiocryptopay)
+        crypto_url = f"https://t.me/send?start=IV{callback.from_user.id}{int(time.time())}"
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💎 Оплатить через CryptoBot", url=crypto_url)],
+            [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_crypto_{product_id}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"buy_{product_id}")]
+        ])
+
+        await callback.message.answer(
+            f"💎 <b>Оплата криптовалютой</b>\n\n"
+            f"🛍 Товар: {product['name']}\n"
+            f"💰 Сумма: {price_usdt} USDT\n"
+            f"⏱ Время на оплату: 15 минут\n\n"
+            f"📱 Нажмите кнопку ниже для оплаты через CryptoBot\n"
+            f"После оплаты нажмите 'Проверить оплату'",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+
+        # Сохраняем ожидающий крипто-платёж
+        db.data.setdefault("pending_crypto", {})[f"{callback.from_user.id}_{product_id}"] = {
+            "user_id": callback.from_user.id,
+            "product_id": product_id,
+            "amount": price_usdt,
+            "created_at": datetime.now().isoformat()
+        }
+        db.save()
+
+    except Exception as e:
+        logger.error(f"Ошибка при создании крипто-платежа: {e}")
+        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+
+
+@router.callback_query(F.data.startswith("check_crypto_"))
+async def check_crypto_payment(callback: CallbackQuery):
+    try:
+        product_id = callback.data.replace("check_crypto_", "")
+        payment_key = f"{callback.from_user.id}_{product_id}"
+        
+        pending = db.data.get("pending_crypto", {}).get(payment_key)
+        
+        if not pending:
+            await callback.answer("❌ Платёж не найден!", show_alert=True)
+            return
+
+        # TODO: Здесь должна быть проверка через CryptoBot API
+        # Пока просто имитируем успешную оплату для демо
+        await callback.answer(
+            "⏳ Функция в разработке!\n\n"
+            "Для полной интеграции нужен API токен CryptoBot.\n"
+            "Получите его у @CryptoBot командой /app",
+            show_alert=True
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при проверке крипто-платежа: {e}")
+        await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
+
+
+@router.callback_query(F.data == "back_to_main")
+async def back_to_main(callback: CallbackQuery):
+    await callback.message.delete()
+    start_msg = db.get_start_message()
+    keyboard = get_main_keyboard()
+    await callback.message.answer(start_msg["text"], reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("page_"))
