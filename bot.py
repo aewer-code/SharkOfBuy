@@ -617,10 +617,38 @@ async def process_my_orders(callback: CallbackQuery):
 
 @router.pre_checkout_query()
 async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
+    """
+    ВАЖНО: Это НЕ оплата! Это только ПРОВЕРКА перед оплатой.
+    Telegram спрашивает "можно ли принять платёж?".
+    НИКОГДА не выдавайте товар здесь!
+    """
     try:
-        # Можно добавить дополнительную проверку здесь
+        # Проверяем наличие товара
+        product_id = pre_checkout_query.invoice_payload.replace("product_", "")
+        product = db.get_product(product_id)
+        
+        if not product:
+            await pre_checkout_query.answer(
+                ok=False, 
+                error_message="❌ Товар не найден"
+            )
+            logger.warning(f"Pre-checkout отклонён: товар {product_id} не найден")
+            return
+        
+        # Проверяем остаток
+        stock = product.get("stock")
+        if stock is not None and stock <= 0:
+            await pre_checkout_query.answer(
+                ok=False,
+                error_message="❌ Товар закончился"
+            )
+            logger.warning(f"Pre-checkout отклонён: товар {product_id} закончился")
+            return
+        
+        # Всё ОК, можно принимать платёж
         await pre_checkout_query.answer(ok=True)
-        logger.info(f"Pre-checkout для пользователя {pre_checkout_query.from_user.id}")
+        logger.info(f"Pre-checkout одобрен для {pre_checkout_query.from_user.id}, товар {product_id}")
+        
     except Exception as e:
         logger.error(f"Ошибка в pre-checkout: {e}")
         await pre_checkout_query.answer(ok=False, error_message="Ошибка обработки платежа")
