@@ -30,3 +30,10 @@ ENV/
 .DS_Store
 Thumbs.db
 
+# Другие проекты (не относятся к боту)
+.cursor/
+CreativeHub/
+codehub/
+BySell/
+EasyCode/
+
