@@ -1360,12 +1360,17 @@ async def admin_pending_orders(callback: CallbackQuery):
     
     pending = db.get_pending_orders()
     if not pending:
-        await callback.message.edit_text(
-            "⏳ <b>Нет ожидающих заказов</b>\n\n"
-            "Все заказы обработаны!",
-            reply_markup=get_admin_keyboard(),
-            parse_mode=ParseMode.HTML
-        )
+        try:
+            await callback.message.edit_text(
+                "⏳ <b>Нет ожидающих заказов</b>\n\n"
+                "Все заказы обработаны!",
+                reply_markup=get_admin_keyboard(),
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            # Если сообщение не изменилось, просто отвечаем
+            await callback.answer("⏳ Нет ожидающих заказов", show_alert=True)
+            return
         await callback.answer()
         return
     
