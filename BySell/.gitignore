@@ -1,0 +1,32 @@
+# Конфиденциальные данные
+.env
+*.env
+
+# База данных
+database.json
+database.json.backup*
+
+# Логи
+*.log
+bot.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+

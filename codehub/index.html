@@ -1,0 +1,2618 @@
+<!DOCTYPE html>
+<html lang="ru" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kvoxy — Мессенджер для разработчиков</title>
+    <script>
+        // Force HTTP if HTTPS is detected
+        if (window.location.protocol === 'https:') {
+            window.location.href = 'http://' + window.location.host + window.location.pathname + window.location.search;
+        }
+    </script>
+    <meta name="description" content="Kvoxy — платформа для разработчиков. Делитесь кодом, обсуждайте проекты, находите решения.">
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        :root {
+            --bg-color: #000000;
+            --text-color: #ffffff;
+            --glass-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow-x: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+        
+        h1, h2, h3, h4, .font-heading {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        
+        /* Liquid Glass Effects */
+        .glass {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border: 1px solid var(--glass-border);
+        }
+        
+        .glass-hover:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+        
+        .glass-btn {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border: 1px solid var(--glass-border);
+            transition: all 0.3s ease;
+        }
+        
+        .glass-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+        
+        .glass-btn-primary {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .glass-btn-primary:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+        
+        /* File Preview with Hover */
+        .file-item {
+            position: relative;
+            border-radius: 8px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .file-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+            transform: scale(1.02);
+        }
+        
+        .file-item .file-remove {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 24px;
+            height: 24px;
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            cursor: pointer;
+            z-index: 10;
+        }
+        
+        .file-item:hover .file-remove {
+            opacity: 1;
+        }
+        
+        .file-item .file-remove:hover {
+            background: rgba(220, 38, 38, 0.8);
+        }
+        
+        /* Code Syntax Highlighting */
+        .code-block {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 1rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.875rem;
+            overflow-x: auto;
+            position: relative;
+        }
+        
+        /* Code Preview - Unique Feature: Live Code Execution */
+        .code-preview {
+            position: relative;
+            margin-top: 0.5rem;
+        }
+        
+        .code-preview-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            z-index: 5;
+        }
+        
+        .live-preview {
+            margin-top: 1rem;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .live-preview-header {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 0.5rem 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.75rem;
+            color: rgba(255, 255, 255, 0.7);
+        }
+        
+        .live-preview-content {
+            background: #1e1e1e;
+            padding: 1rem;
+            min-height: 100px;
+        }
+        
+        .live-preview iframe {
+            width: 100%;
+            height: 400px;
+            border: none;
+            background: white;
+        }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            z-index: 1000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+        
+        .modal-content {
+            user-select: text;
+            pointer-events: auto;
+        }
+        
+        .modal-content input,
+        .modal-content textarea,
+        .modal-content select {
+            user-select: text;
+            pointer-events: auto;
+        }
+        
+        .language-option.active {
+            background: rgba(255, 255, 255, 0.15) !important;
+            color: #fff !important;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        .comment-item {
+            margin-bottom: 1rem;
+        }
+        
+        .comment-item:last-child {
+            margin-bottom: 0;
+        }
+        
+        .modal-overlay.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            max-width: 900px;
+            max-height: 90vh;
+            width: 100%;
+            overflow-y: auto;
+        }
+        
+        /* Post expanded */
+        .post-expanded {
+            display: none;
+        }
+        
+        .post-expanded.active {
+            display: block;
+        }
+        
+        /* Comment nesting */
+        .comment-reply {
+            margin-left: 3rem;
+            margin-top: 1rem;
+            padding-left: 1rem;
+            border-left: 2px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        /* Avatar */
+        .avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, rgba(255,255,255,0.2), rgba(255,255,255,0.1));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+        
+        /* Language Badge */
+        .language-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        /* Login/Register Modal */
+        .auth-modal {
+            max-width: 400px;
+        }
+        
+        /* Theme Selector */
+        .theme-option {
+            width: 60px;
+            height: 60px;
+            border-radius: 8px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.3s ease;
+        }
+        
+        .theme-option:hover {
+            transform: scale(1.1);
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+        
+        .theme-option.active {
+            border-color: rgba(255, 255, 255, 0.8);
+            box-shadow: 0 0 0 2px var(--bg-color), 0 0 0 4px rgba(255, 255, 255, 0.3);
+        }
+        
+        /* Loading */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="modal-overlay">
+        <div class="glass rounded-2xl p-8 modal-content auth-modal">
+            <div class="mb-6">
+                <h2 class="text-2xl font-bold" id="auth-title">Вход</h2>
+            </div>
+            
+            <div id="auth-form">
+                <div class="space-y-4 mb-6">
+                    <div id="name-field" class="hidden">
+                        <label class="block text-white/70 text-sm mb-2">Имя</label>
+                        <input type="text" id="reg-name" class="w-full glass px-4 py-2 rounded-lg text-white placeholder-white/40 outline-none" placeholder="Ваше имя">
+                    </div>
+                    <div>
+                        <label class="block text-white/70 text-sm mb-2">Имя пользователя</label>
+                        <input type="text" id="auth-username" class="w-full glass px-4 py-2 rounded-lg text-white placeholder-white/40 outline-none" placeholder="@username">
+                    </div>
+                    <div>
+                        <label class="block text-white/70 text-sm mb-2">Пароль</label>
+                        <input type="password" id="auth-password" class="w-full glass px-4 py-2 rounded-lg text-white placeholder-white/40 outline-none" placeholder="Пароль">
+                    </div>
+                    <div id="email-field" class="hidden">
+                        <label class="block text-white/70 text-sm mb-2">Email</label>
+                        <input type="email" id="reg-email" class="w-full glass px-4 py-2 rounded-lg text-white placeholder-white/40 outline-none" placeholder="email@example.com">
+                    </div>
+                    <div id="language-field" class="hidden">
+                        <label class="block text-white/70 text-sm mb-2">Язык программирования</label>
+                        <div class="grid grid-cols-4 gap-2">
+                            <button class="language-option glass px-3 py-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors text-sm" data-lang="javascript">JavaScript</button>
+                            <button class="language-option glass px-3 py-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors text-sm" data-lang="python">Python</button>
+                            <button class="language-option glass px-3 py-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors text-sm" data-lang="java">Java</button>
+                            <button class="language-option glass px-3 py-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors text-sm" data-lang="cpp">C++</button>
+                            <button class="language-option glass px-3 py-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors text-sm" data-lang="go">Go</button>
+                            <button class="language-option glass px-3 py-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors text-sm" data-lang="rust">Rust</button>
+                            <button class="language-option glass px-3 py-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors text-sm" data-lang="php">PHP</button>
+                            <button class="language-option glass px-3 py-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors text-sm" data-lang="ruby">Ruby</button>
+                        </div>
+                        <input type="hidden" id="reg-language" value="javascript">
+                    </div>
+                </div>
+                
+                <button id="auth-submit" class="w-full glass-btn-primary text-white py-3 rounded-lg font-medium mb-4">
+                    Войти
+                </button>
+                
+                <div class="text-center text-white/60 text-sm">
+                    <span id="auth-switch-text">Нет аккаунта? </span>
+                    <button id="auth-switch" class="text-white hover:underline">Зарегистрироваться</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Main App (hidden until auth) -->
+    <div id="main-app" class="hidden flex-1 flex flex-col">
+        
+        <!-- Top Navigation -->
+        <nav class="glass border-b border-white/10 px-6 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-white flex items-center justify-center">
+                    <i data-lucide="code" class="w-5 h-5 text-black"></i>
+                </div>
+                <span class="font-heading font-bold text-xl">KVOXY</span>
+            </div>
+            
+            <div class="flex items-center gap-4">
+                <button id="theme-btn" class="glass-btn p-2 rounded-lg text-white/70 hover:text-white transition-colors" title="Темы">
+                    <i data-lucide="palette" class="w-5 h-5"></i>
+                </button>
+                <button id="notifications-btn" class="glass-btn p-2 rounded-lg text-white/70 hover:text-white transition-colors relative" title="Уведомления">
+                    <i data-lucide="bell" class="w-5 h-5"></i>
+                    <span id="notifications-badge" class="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center hidden">0</span>
+                </button>
+                <button id="settings-btn" class="glass-btn p-2 rounded-lg text-white/70 hover:text-white transition-colors" title="Настройки">
+                    <i data-lucide="settings" class="w-5 h-5"></i>
+                </button>
+                <button id="logout-btn-top" class="glass-btn p-2 rounded-lg text-white/70 hover:text-white transition-colors" title="Выход">
+                    <i data-lucide="log-out" class="w-5 h-5"></i>
+                </button>
+                <button id="create-post-btn" class="glass-btn glass-btn-primary text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
+                    <i data-lucide="plus" class="w-4 h-4"></i>
+                    Создать пост
+                </button>
+                <button id="profile-btn" class="flex items-center gap-2">
+                    <div class="avatar text-white" id="user-avatar">EC</div>
+                    <span class="text-white/70 text-sm font-medium" id="user-username">@ecronx</span>
+                </button>
+            </div>
+        </nav>
+        
+        <!-- Main Layout -->
+        <div class="flex-1 flex overflow-hidden">
+            
+            <!-- Left Sidebar - Feed -->
+            <div class="flex-1 overflow-y-auto p-6" id="feed-container">
+                <div class="max-w-2xl mx-auto space-y-6" id="posts-container">
+                    <!-- Posts will be loaded here -->
+                </div>
+            </div>
+            
+            <!-- Chat View (hidden by default) -->
+            <div class="flex-1 overflow-hidden hidden" id="chat-view-container">
+                <div class="h-full flex flex-col" id="chat-view-content">
+                    <!-- Chat will be rendered here -->
+                </div>
+            </div>
+            
+            <!-- Right Sidebar - Chats & Channels -->
+            <div class="w-80 border-l border-white/10 glass overflow-y-auto" id="chats-sidebar">
+                <div class="p-6 space-y-6">
+                    
+                    <!-- Profile Section -->
+                    <div class="glass rounded-xl p-4">
+                        <div class="flex items-center gap-3 mb-4">
+                            <div class="avatar text-white" id="sidebar-avatar">EC</div>
+                            <div class="flex-1">
+                                <div class="font-bold text-white" id="sidebar-name">ecronx</div>
+                                <div class="text-white/50 text-sm" id="sidebar-username">@ecronx</div>
+                            </div>
+                        </div>
+                        <p class="text-white/60 text-sm mb-4" id="sidebar-bio">Senior разработчик. Люблю чистый код и кофе ☕</p>
+                        <div class="flex items-center gap-2 mb-4">
+                            <span class="language-badge text-white" id="sidebar-language">JavaScript</span>
+                        </div>
+                        <div class="flex items-center gap-4 text-sm">
+                            <div>
+                                <div class="font-bold text-white" id="sidebar-followers">127</div>
+                                <div class="text-white/50 text-xs">Подписчики</div>
+                            </div>
+                            <div>
+                                <div class="font-bold text-white" id="sidebar-following">89</div>
+                                <div class="text-white/50 text-xs">Подписки</div>
+                            </div>
+                            <div>
+                                <div class="font-bold text-white" id="sidebar-posts">342</div>
+                                <div class="text-white/50 text-xs">Посты</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Search Users -->
+                    <div>
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="font-bold text-white">Поиск пользователей</h3>
+                        </div>
+                        <input type="text" id="search-users-input" placeholder="Поиск по юзернейму..." class="w-full glass px-4 py-2 rounded-lg text-white placeholder-white/40 outline-none text-sm mb-3">
+                        <div class="space-y-2" id="search-results">
+                            <!-- Search results will be shown here -->
+                        </div>
+                    </div>
+                    
+                    <!-- Chats -->
+                    <div>
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="font-bold text-white">Чаты</h3>
+                            <div class="flex items-center gap-2">
+                                <button id="hide-chats-btn" class="glass-btn p-1.5 rounded text-white/60 hover:text-white transition-colors" title="Скрыть чаты">
+                                    <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                                </button>
+                                <button id="create-chat-btn" class="glass-btn p-1.5 rounded text-white/60 hover:text-white transition-colors" title="Создать чат">
+                                    <i data-lucide="plus" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="space-y-2" id="chats-list">
+                            <!-- Chats will be loaded here -->
+                        </div>
+                    </div>
+                    
+                    
+                </div>
+            </div>
+            
+        </div>
+        
+    </div>
+    
+    <!-- Profile Modal -->
+    <div id="profile-modal" class="modal-overlay">
+        <div class="glass rounded-2xl p-8 modal-content">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-2xl font-bold">Редактировать профиль</h2>
+                <button class="glass-btn p-2 rounded-lg text-white/70 hover:text-white transition-colors" onclick="closeProfileModal()">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            
+            <div class="space-y-6">
+                <div>
+                    <label class="block text-white/70 text-sm mb-2">Аватар</label>
+                    <div class="flex items-center gap-4">
+                        <div class="avatar text-white" style="width: 80px; height: 80px; font-size: 2rem;" id="profile-avatar">EC</div>
+                        <button class="glass-btn text-white px-4 py-2 rounded-lg text-sm" onclick="document.getElementById('avatar-input').click()">
+                            Загрузить фото
+                        </button>
+                        <input type="file" id="avatar-input" accept="image/*" class="hidden">
+                    </div>
+                </div>
+                
+                <div>
+                    <label class="block text-white/70 text-sm mb-2">Имя</label>
+                    <input type="text" id="profile-name" class="w-full glass px-4 py-2 rounded-lg text-white placeholder-white/40 outline-none">
+                </div>
+                
+                <div>
+                    <label class="block text-white/70 text-sm mb-2">Юзернейм</label>
+                    <input type="text" id="profile-username" class="w-full glass px-4 py-2 rounded-lg text-white placeholder-white/40 outline-none">
+                </div>
+                
+                <div>
+                    <label class="block text-white/70 text-sm mb-2">Язык программирования</label>
+                    <select id="profile-language" class="w-full glass px-4 py-2 rounded-lg text-white outline-none">
+                        <option value="javascript">JavaScript</option>
+                        <option value="python">Python</option>
+                        <option value="java">Java</option>
+                        <option value="cpp">C++</option>
+                        <option value="go">Go</option>
+                        <option value="rust">Rust</option>
+                        <option value="php">PHP</option>
+                        <option value="ruby">Ruby</option>
+                    </select>
+                </div>
+                
+                <div>
+                    <label class="block text-white/70 text-sm mb-2">Описание</label>
+                    <textarea 
+                        rows="4"
+                        id="profile-bio"
+                        class="w-full glass px-4 py-2 rounded-lg text-white placeholder-white/40 outline-none resize-none"
+                        placeholder="Расскажи о себе..."
+                    ></textarea>
+                </div>
+                
+                <div class="flex justify-between items-center pt-4 border-t border-white/10">
+                    <button id="logout-btn-profile" class="glass-btn text-white/50 hover:text-white/70 px-6 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors">
+                        <i data-lucide="log-out" class="w-4 h-4"></i>
+                        Выйти из аккаунта
+                    </button>
+                    <div class="flex gap-3">
+                        <button class="glass-btn text-white px-6 py-2 rounded-lg" onclick="closeProfileModal()">
+                            Отмена
+                        </button>
+                        <button class="glass-btn-primary text-white px-6 py-2 rounded-lg" onclick="saveProfile()">
+                            Сохранить
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Theme Modal -->
+    <div id="theme-modal" class="modal-overlay">
+        <div class="glass rounded-2xl p-8 modal-content" style="max-width: 600px;">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-2xl font-bold">Выбор темы</h2>
+                <button class="glass-btn p-2 rounded-lg text-white/70 hover:text-white transition-colors" onclick="closeThemeModal()">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            
+            <div>
+                <label class="block text-white/70 text-sm mb-3">Выберите тему оформления</label>
+                <div class="flex flex-wrap gap-3" id="themes-container">
+                    <!-- Themes will be loaded here -->
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal-overlay">
+        <div class="glass rounded-2xl p-8 modal-content" style="max-width: 600px;">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-2xl font-bold">Настройки</h2>
+                <button class="glass-btn p-2 rounded-lg text-white/70 hover:text-white transition-colors" onclick="closeSettingsModal()">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            
+            <div class="space-y-6">
+                <div>
+                    <label class="block text-white/70 text-sm mb-2">Язык программирования</label>
+                    <select id="settings-language" class="w-full glass px-4 py-2 rounded-lg text-white outline-none">
+                        <option value="javascript">JavaScript</option>
+                        <option value="python">Python</option>
+                        <option value="java">Java</option>
+                        <option value="cpp">C++</option>
+                        <option value="go">Go</option>
+                        <option value="rust">Rust</option>
+                        <option value="php">PHP</option>
+                        <option value="ruby">Ruby</option>
+                        <option value="typescript">TypeScript</option>
+                        <option value="swift">Swift</option>
+                        <option value="kotlin">Kotlin</option>
+                    </select>
+                </div>
+                
+                <div class="flex items-center justify-between">
+                    <div>
+                        <label class="block text-white/70 text-sm mb-1">Уведомления</label>
+                        <p class="text-white/50 text-xs">Получать уведомления о новых сообщениях</p>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="settings-notifications" class="sr-only peer" onchange="saveNotificationSetting(this.checked)">
+                        <div class="w-11 h-6 glass rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                    </label>
+                </div>
+                
+                <div class="flex justify-end gap-3">
+                    <button class="glass-btn text-white px-6 py-2 rounded-lg" onclick="closeSettingsModal()">
+                        Отмена
+                    </button>
+                    <button class="glass-btn-primary text-white px-6 py-2 rounded-lg" onclick="saveSettings()">
+                        Сохранить
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Create Post Modal -->
+    <div id="create-post-modal" class="modal-overlay">
+        <div class="glass rounded-2xl p-6 modal-content" style="max-width: 700px;">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-2xl font-bold">Создать пост</h2>
+                <button class="glass-btn p-2 rounded-lg text-white/70 hover:text-white transition-colors" onclick="closeCreatePostModal()">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            
+            <div class="space-y-4">
+                <textarea 
+                    id="post-content"
+                    placeholder="Что у тебя на уме? Поделись кодом, скриншотом или вопросом..."
+                    class="w-full glass px-4 py-3 rounded-lg text-white placeholder-white/40 resize-none outline-none"
+                    rows="5"
+                ></textarea>
+                
+                <div class="flex items-center gap-3">
+                    <button class="glass-btn p-2 rounded-lg text-white/70 hover:text-white transition-colors" onclick="document.getElementById('file-input').click()">
+                        <i data-lucide="image" class="w-5 h-5"></i>
+                    </button>
+                    <button class="glass-btn p-2 rounded-lg text-white/70 hover:text-white transition-colors" onclick="document.getElementById('video-input').click()">
+                        <i data-lucide="video" class="w-5 h-5"></i>
+                    </button>
+                    <button class="glass-btn p-2 rounded-lg text-white/70 hover:text-white transition-colors" onclick="document.getElementById('code-input').click()">
+                        <i data-lucide="file-code" class="w-5 h-5"></i>
+                    </button>
+                    <input type="file" id="file-input" accept="image/*" class="hidden" multiple>
+                    <input type="file" id="video-input" accept="video/*" class="hidden" multiple>
+                    <input type="file" id="code-input" accept=".js,.ts,.py,.java,.cpp,.c,.html,.css,.json,.jsx,.tsx" class="hidden" multiple>
+                </div>
+                
+                <div id="files-preview" class="space-y-2">
+                    <!-- Files will be shown here -->
+                </div>
+                
+                <div class="flex justify-end gap-3">
+                    <button class="glass-btn text-white px-6 py-2 rounded-lg" onclick="closeCreatePostModal()">
+                        Отмена
+                    </button>
+                    <button class="glass-btn-primary text-white px-6 py-2 rounded-lg" onclick="submitPost()" id="submit-post-btn">
+                        Опубликовать
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const API_URL = 'http://localhost:5000/api';
+        let currentUser = null;
+        let currentTheme = 'dark';
+        let attachedFiles = [];
+        
+        // Check backend connection
+        function checkBackend() {
+            return fetch(`${API_URL}/health`)
+                .then(res => {
+                    if (res.ok) return true;
+                    return false;
+                })
+                .catch(() => false);
+        }
+        
+        // Initialize
+        lucide.createIcons();
+        
+        // Hotkeys (from Webogram)
+        document.addEventListener('keydown', function(e) {
+            // Ctrl+K or Cmd+K - Search
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                document.getElementById('search-users-input')?.focus();
+            }
+            // Ctrl+N or Cmd+N - New chat
+            if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+                e.preventDefault();
+                document.getElementById('create-chat-btn')?.click();
+            }
+            // Escape - Close modals
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.modal-overlay.active').forEach(modal => {
+                    modal.classList.remove('active');
+                });
+            }
+        });
+        
+        // Check backend before starting (with retry)
+        let backendCheckAttempts = 0;
+        function tryConnectBackend() {
+            checkBackend().then(isOnline => {
+                if (!isOnline) {
+                    backendCheckAttempts++;
+                    if (backendCheckAttempts < 3) {
+                        // Retry after 2 seconds
+                        setTimeout(tryConnectBackend, 2000);
+                        return;
+                    }
+                    
+                    // Show error after 3 attempts
+                    console.error('Backend не доступен! Убедитесь, что backend запущен на http://localhost:5000');
+                    const errorDiv = document.createElement('div');
+                    errorDiv.style.cssText = 'display: flex; align-items: center; justify-content: center; height: 100vh; background: #000; color: #fff; flex-direction: column; gap: 1rem; padding: 2rem; text-align: center;';
+                    errorDiv.innerHTML = `
+                        <h1 style="font-size: 2rem; margin-bottom: 1rem;">⚠️ Backend не запущен</h1>
+                        <p style="color: #999;">Запустите backend в отдельном терминале:</p>
+                        <code style="background: rgba(255,255,255,0.1); padding: 1rem; border-radius: 8px; display: block; margin: 0.5rem 0;">cd backend && python app.py</code>
+                        <p style="color: #999; margin-top: 1rem;">Или используйте скрипт:</p>
+                        <code style="background: rgba(255,255,255,0.1); padding: 1rem; border-radius: 8px; display: block; margin: 0.5rem 0;">./start-backend.sh</code>
+                        <button onclick="location.reload()" style="margin-top: 1rem; padding: 0.75rem 1.5rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #fff; cursor: pointer;">Обновить страницу</button>
+                    `;
+                    document.body.innerHTML = '';
+                    document.body.appendChild(errorDiv);
+                    return;
+                }
+                
+                // Backend is online, proceed
+                // Load theme first
+                const savedTheme = localStorage.getItem('theme');
+                if (savedTheme) {
+                    currentTheme = savedTheme;
+                    applyTheme(savedTheme);
+                }
+                
+                checkAuth();
+                loadThemes();
+                startRealTimeUpdates();
+            });
+        }
+        
+        tryConnectBackend();
+        
+        // Stop updates when page is hidden
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                stopRealTimeUpdates();
+            } else {
+                startRealTimeUpdates();
+            }
+        });
+        
+        // Load theme on page load (before auth)
+        window.addEventListener('DOMContentLoaded', function() {
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme) {
+                currentTheme = savedTheme;
+                // Apply theme immediately
+                fetch(`${API_URL}/themes`)
+                    .then(res => res.json())
+                    .then(themes => {
+                        const theme = themes[savedTheme];
+                        if (theme) {
+                            document.documentElement.style.setProperty('--bg-color', theme.bg);
+                            document.documentElement.style.setProperty('--text-color', theme.text);
+                            document.documentElement.style.setProperty('--glass-bg', theme.glass);
+                            document.documentElement.style.setProperty('--glass-border', theme.border);
+                            document.body.style.backgroundColor = theme.bg;
+                            document.body.style.color = theme.text;
+                        }
+                    })
+                    .catch(() => {
+                        // Backend not ready, will load later
+                    });
+            }
+        });
+        
+        // Auth functions
+        function checkAuth() {
+            fetch(`${API_URL}/user`, { credentials: 'include' })
+                .then(res => {
+                    if (res.ok) {
+                        return res.json();
+                    }
+                    throw new Error('Not authenticated');
+                })
+                .then(user => {
+                    currentUser = user;
+                    // Load saved theme
+                    const savedTheme = localStorage.getItem('theme') || user.theme || 'dark';
+                    currentTheme = savedTheme;
+                    applyTheme(savedTheme);
+                    showMainApp();
+                    loadUserData();
+                })
+                .catch(err => {
+                    console.log('Not authenticated, showing login:', err);
+                    showAuthModal();
+                });
+        }
+        
+        function showAuthModal() {
+            document.getElementById('auth-modal').classList.add('active');
+            document.getElementById('main-app').classList.add('hidden');
+        }
+        
+        function closeAuthModal() {
+            document.getElementById('auth-modal').classList.remove('active');
+        }
+        
+        function showMainApp() {
+            document.getElementById('auth-modal').classList.remove('active');
+            document.getElementById('main-app').classList.remove('hidden');
+        }
+        
+        // Auth form switching
+        let isRegister = false;
+        document.getElementById('auth-switch').addEventListener('click', function() {
+            isRegister = !isRegister;
+            const title = document.getElementById('auth-title');
+            const submit = document.getElementById('auth-submit');
+            const switchText = document.getElementById('auth-switch-text');
+            const switchBtn = document.getElementById('auth-switch');
+            
+            if (isRegister) {
+                title.textContent = 'Регистрация';
+                submit.textContent = 'Зарегистрироваться';
+                switchText.textContent = 'Уже есть аккаунт? ';
+                switchBtn.textContent = 'Войти';
+                document.getElementById('name-field').classList.remove('hidden');
+                document.getElementById('email-field').classList.remove('hidden');
+                document.getElementById('language-field').classList.remove('hidden');
+                
+                // Setup language selection
+                setTimeout(() => {
+                    document.querySelectorAll('.language-option').forEach(btn => {
+                        btn.addEventListener('click', function(e) {
+                            e.stopPropagation();
+                            document.querySelectorAll('.language-option').forEach(b => b.classList.remove('active'));
+                            this.classList.add('active');
+                            document.getElementById('reg-language').value = this.dataset.lang;
+                        });
+                    });
+                    // Set default
+                    const defaultBtn = document.querySelector('.language-option[data-lang="javascript"]');
+                    if (defaultBtn) {
+                        defaultBtn.classList.add('active');
+                    }
+                }, 100);
+            } else {
+                title.textContent = 'Вход';
+                submit.textContent = 'Войти';
+                switchText.textContent = 'Нет аккаунта? ';
+                switchBtn.textContent = 'Зарегистрироваться';
+                document.getElementById('name-field').classList.add('hidden');
+                document.getElementById('email-field').classList.add('hidden');
+                document.getElementById('language-field').classList.add('hidden');
+            }
+        });
+        
+        // Auth submit with validation
+        document.getElementById('auth-submit').addEventListener('click', function() {
+            const username = document.getElementById('auth-username').value.trim();
+            const password = document.getElementById('auth-password').value;
+            
+            if (!username || !password) {
+                alert('Заполните все поля');
+                return;
+            }
+            
+            if (isRegister) {
+                const name = document.getElementById('reg-name').value.trim();
+                const email = document.getElementById('reg-email').value.trim();
+                const languageInput = document.getElementById('reg-language');
+                const language = languageInput ? languageInput.value : 'javascript';
+                
+                // Validate
+                if (!name || !email || !language) {
+                    alert('Заполните все поля');
+                    return;
+                }
+                
+                // Validate email
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailRegex.test(email)) {
+                    alert('Неверный формат email');
+                    return;
+                }
+                
+                fetch(`${API_URL}/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ username, password, email, name, language })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        currentUser = data.user;
+                        // Save theme to localStorage
+                        localStorage.setItem('theme', data.user.theme || 'dark');
+                        showMainApp();
+                        loadUserData();
+                        closeAuthModal();
+                    } else {
+                        alert(data.error || 'Ошибка регистрации');
+                    }
+                })
+                .catch(err => {
+                    console.error('Registration error:', err);
+                    alert('Ошибка регистрации');
+                });
+            } else {
+                fetch(`${API_URL}/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ username, password })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        currentUser = data.user;
+                        // Save theme to localStorage
+                        localStorage.setItem('theme', data.user.theme || 'dark');
+                        applyTheme(data.user.theme || 'dark');
+                        showMainApp();
+                        loadUserData();
+                        closeAuthModal();
+                    } else {
+                        alert(data.error || 'Неверные данные');
+                    }
+                })
+                .catch(err => {
+                    console.error('Login error:', err);
+                    alert('Ошибка входа');
+                });
+            }
+        });
+        
+        // Load user data
+        function loadUserData() {
+            fetch(`${API_URL}/user`, { credentials: 'include' })
+                .then(res => res.json())
+                .then(user => {
+                    currentUser = user;
+                    document.getElementById('user-username').textContent = '@' + user.username;
+                    document.getElementById('user-avatar').textContent = user.name.substring(0, 2).toUpperCase();
+                    document.getElementById('sidebar-name').textContent = user.name;
+                    document.getElementById('sidebar-username').textContent = '@' + user.username;
+                    document.getElementById('sidebar-bio').textContent = user.bio || 'Нет описания';
+                    document.getElementById('sidebar-language').textContent = getLanguageName(user.language);
+                    document.getElementById('sidebar-followers').textContent = user.followers || 0;
+                    document.getElementById('sidebar-following').textContent = user.following || 0;
+                    document.getElementById('sidebar-posts').textContent = user.posts_count || 0;
+                    document.getElementById('sidebar-avatar').textContent = user.name.substring(0, 2).toUpperCase();
+                    
+                    loadPosts();
+                    loadChannels();
+                    loadChats();
+                    // Start notifications polling
+                    if (notificationsInterval) {
+                        clearInterval(notificationsInterval);
+                    }
+                    loadNotifications();
+                    notificationsInterval = setInterval(loadNotifications, 5000);
+                });
+        }
+        
+        function getLanguageName(lang) {
+            const names = {
+                'javascript': 'JavaScript',
+                'python': 'Python',
+                'java': 'Java',
+                'cpp': 'C++',
+                'go': 'Go',
+                'rust': 'Rust',
+                'php': 'PHP',
+                'ruby': 'Ruby'
+            };
+            return names[lang] || lang;
+        }
+        
+        // Load posts
+        function loadPosts() {
+            fetch(`${API_URL}/posts`, { credentials: 'include' })
+                .then(res => {
+                    if (!res.ok) {
+                        throw new Error('Failed to load posts');
+                    }
+                    return res.json();
+                })
+                .then(postsData => {
+                    allPosts = postsData; // Store globally
+                    const container = document.getElementById('posts-container');
+                    container.innerHTML = '';
+                    
+                    if (postsData.length === 0) {
+                        container.innerHTML = '<div class="text-center text-white/50 py-12">Пока нет постов. Будь первым!</div>';
+                        return;
+                    }
+                    
+                    postsData.forEach(post => {
+                        container.appendChild(createPostElement(post));
+                    });
+                    
+                    lucide.createIcons();
+                })
+                .catch(err => {
+                    console.error('Error loading posts:', err);
+                    const container = document.getElementById('posts-container');
+                    container.innerHTML = '<div class="text-center text-red-400 py-12">Ошибка загрузки постов. Проверьте, что backend запущен на порту 5000.</div>';
+                });
+        }
+        
+        // Global posts array for edit/delete (will be populated in loadPosts)
+        let allPosts = [];
+        
+        function createPostElement(post) {
+            const div = document.createElement('div');
+            div.className = 'glass rounded-2xl p-6 glass-hover post-item';
+            div.dataset.postId = post.id;
+            
+            const avatarText = (post.name || post.username).substring(0, 2).toUpperCase();
+            const timeAgo = getTimeAgo(post.created_at);
+            
+            div.innerHTML = `
+                <div class="flex items-start gap-4">
+                    <div class="avatar text-white cursor-pointer hover:opacity-80" onclick="event.stopPropagation(); openUserProfile('${post.username}')">${avatarText}</div>
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="font-bold text-white cursor-pointer hover:text-white/80" onclick="event.stopPropagation(); openUserProfile('${post.username}')">${post.name || post.username}</span>
+                            <span class="text-white/40 text-sm cursor-pointer hover:text-white/60" onclick="event.stopPropagation(); openUserProfile('${post.username}')">@${post.username}</span>
+                            <span class="text-white/30 text-sm">· ${timeAgo}</span>
+                            <span class="language-badge text-white">${getLanguageName(post.language)}</span>
+                        </div>
+                        <p class="text-white/80 mb-4">${escapeHtml(post.content)}</p>
+                        
+                        ${post.files && post.files.length > 0 ? `
+                            <div class="space-y-2 mb-4">
+                                ${post.files.map(file => {
+                                    if (file.type === 'images') {
+                                        return `<div class="file-item"><img src="${API_URL.replace('/api', '')}${file.url}" class="rounded-lg max-h-64 w-full object-contain" alt="${file.filename}"></div>`;
+                                    } else if (file.type === 'videos') {
+                                        return `<div class="file-item"><video src="${API_URL.replace('/api', '')}${file.url}" controls class="rounded-lg max-h-64 w-full"></video></div>`;
+                                    } else {
+                                        const ext = file.filename.split('.').pop().toLowerCase();
+                                        const canPreview = ['html', 'js', 'css', 'jsx', 'tsx'].includes(ext);
+                                        return `
+                                            <div class="file-item glass p-3 rounded-lg">
+                                                <div class="flex items-center gap-3">
+                                                    <i data-lucide="file-code" class="w-5 h-5 text-white/60"></i>
+                                                    <span class="text-white/80 text-sm flex-1">${file.filename}</span>
+                                                    ${canPreview ? `<button class="glass-btn px-3 py-1 rounded text-white/70 hover:text-white text-xs" onclick="previewCode('${file.url}', '${ext}')">Live Preview</button>` : ''}
+                                                </div>
+                                            </div>
+                                        `;
+                                    }
+                                }).join('')}
+                            </div>
+                        ` : ''}
+                        
+                        <div class="flex items-center gap-6 mt-4 pt-4 border-t border-white/10">
+                            <button class="flex items-center gap-2 text-white/60 hover:text-white transition-colors" onclick="event.stopPropagation(); toggleComments('${post.id}')">
+                                <i data-lucide="message-circle" class="w-5 h-5"></i>
+                                <span class="text-sm">${post.comments_count || 0}</span>
+                            </button>
+                            <button class="flex items-center gap-2 text-white/60 hover:text-white transition-colors" onclick="event.stopPropagation(); likePost('${post.id}')">
+                                <i data-lucide="heart" class="w-5 h-5 ${post.liked_by && post.liked_by.includes(currentUser.username) ? 'fill-red-500 text-red-500' : ''}"></i>
+                                <span class="text-sm">${post.likes || 0}</span>
+                            </button>
+                            <button class="flex items-center gap-2 text-white/60 hover:text-white transition-colors ml-auto" onclick="event.stopPropagation(); togglePostDetails('${post.id}')" title="Подробнее">
+                                <i data-lucide="chevron-right" class="w-5 h-5 transition-transform" id="chevron-${post.id}"></i>
+                            </button>
+                            ${post.user_id === currentUser.id || post.username === currentUser.username ? `
+                                <button class="flex items-center gap-2 text-white/40 hover:text-white transition-colors" onclick="event.stopPropagation(); editPost('${post.id}')" title="Редактировать">
+                                    <i data-lucide="edit" class="w-4 h-4"></i>
+                                </button>
+                                <button class="flex items-center gap-2 text-red-400/60 hover:text-red-400 transition-colors" onclick="event.stopPropagation(); deletePost('${post.id}')" title="Удалить">
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                </button>
+                            ` : ''}
+                        </div>
+                        
+                        <div class="post-expanded mt-6 pt-6 border-t border-white/10" id="expanded-${post.id}">
+                            <div class="space-y-4">
+                                <h3 class="font-bold text-white mb-4">Комментарии (${post.comments_count || 0})</h3>
+                                <div id="comments-${post.id}"></div>
+                                <div class="glass p-4 rounded-lg" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()">
+                                    <div class="flex items-start gap-3">
+                                        <div class="avatar text-white">${currentUser.name.substring(0, 2).toUpperCase()}</div>
+                                        <div class="flex-1">
+                                            <textarea 
+                                                placeholder="Написать комментарий..."
+                                                class="w-full bg-transparent text-white placeholder-white/40 resize-none outline-none mb-3 text-sm"
+                                                rows="2"
+                                                id="comment-input-${post.id}"
+                                                onkeydown="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); addComment('${post.id}'); }"
+                                                onclick="event.stopPropagation()"
+                                                onfocus="event.stopPropagation()"
+                                                onmousedown="event.stopPropagation()"
+                                            ></textarea>
+                                            <div id="comment-files-${post.id}" class="mb-2 space-y-2"></div>
+                                            <div class="flex items-center justify-between">
+                                                <div class="flex items-center gap-2">
+                                                    <input type="file" id="comment-image-${post.id}" accept="image/*" class="hidden" onchange="handleCommentFile('${post.id}', this.files, 'image')">
+                                                    <input type="file" id="comment-file-${post.id}" accept=".js,.ts,.py,.java,.cpp,.c,.html,.css,.json,.jsx,.tsx" class="hidden" onchange="handleCommentFile('${post.id}', this.files, 'file')">
+                                                    <button class="glass-btn p-1.5 rounded text-white/60 hover:text-white transition-colors" onclick="event.stopPropagation(); event.preventDefault(); document.getElementById('comment-image-${post.id}').click(); return false;" title="Прикрепить изображение">
+                                                        <i data-lucide="image" class="w-4 h-4"></i>
+                                                    </button>
+                                                    <button class="glass-btn p-1.5 rounded text-white/60 hover:text-white transition-colors" onclick="event.stopPropagation(); event.preventDefault(); document.getElementById('comment-file-${post.id}').click(); return false;" title="Прикрепить файл">
+                                                        <i data-lucide="file-code" class="w-4 h-4"></i>
+                                                    </button>
+                                                </div>
+                                                <button class="glass-btn-primary text-white px-4 py-1.5 rounded-lg text-sm font-medium" onclick="event.stopPropagation(); event.preventDefault(); addComment('${post.id}'); return false;">
+                                                    Отправить
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Remove click handler from post - only button > opens comments
+            
+            return div;
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function getTimeAgo(dateString) {
+            if (!dateString) return 'только что';
+            try {
+                const date = new Date(dateString);
+                if (isNaN(date.getTime())) return 'только что';
+                const now = new Date();
+                const diff = Math.floor((now - date) / 1000); // seconds
+                
+                if (diff < 60) return 'только что';
+                const minutes = Math.floor(diff / 60);
+                if (minutes < 60) return `${minutes} ${minutes === 1 ? 'минуту' : minutes < 5 ? 'минуты' : 'минут'} назад`;
+                const hours = Math.floor(minutes / 60);
+                if (hours < 24) return `${hours} ${hours === 1 ? 'час' : hours < 5 ? 'часа' : 'часов'} назад`;
+                const days = Math.floor(hours / 24);
+                if (days < 7) return `${days} ${days === 1 ? 'день' : days < 5 ? 'дня' : 'дней'} назад`;
+                const weeks = Math.floor(days / 7);
+                if (weeks < 4) return `${weeks} ${weeks === 1 ? 'неделю' : weeks < 5 ? 'недели' : 'недель'} назад`;
+                const months = Math.floor(days / 30);
+                if (months < 12) return `${months} ${months === 1 ? 'месяц' : months < 5 ? 'месяца' : 'месяцев'} назад`;
+                const years = Math.floor(days / 365);
+                return `${years} ${years === 1 ? 'год' : years < 5 ? 'года' : 'лет'} назад`;
+            } catch (e) {
+                return 'только что';
+            }
+        }
+        
+        function togglePostDetails(postId) {
+            const expanded = document.getElementById(`expanded-${postId}`);
+            const chevron = document.getElementById(`chevron-${postId}`);
+            if (expanded) {
+                const isActive = expanded.classList.contains('active');
+                expanded.classList.toggle('active');
+                if (expanded.classList.contains('active')) {
+                    openComments.add(postId); // Track open comments
+                    loadComments(postId);
+                    if (chevron) {
+                        chevron.style.transform = 'rotate(90deg)';
+                    }
+                } else {
+                    openComments.delete(postId); // Remove from tracking
+                    if (chevron) {
+                        chevron.style.transform = 'rotate(0deg)';
+                    }
+                }
+            }
+        }
+        
+        function editPost(postId) {
+            const post = allPosts.find(p => p.id === postId);
+            if (!post) {
+                // Try to find in current posts
+                const postElement = document.querySelector(`[data-post-id="${postId}"]`);
+                if (!postElement) return;
+                // Extract post data from DOM
+                const content = postElement.querySelector('p.text-white\\/80')?.textContent || '';
+                const modal = document.createElement('div');
+                modal.className = 'modal-overlay active';
+                modal.innerHTML = `
+                    <div class="glass rounded-2xl p-8 modal-content" style="max-width: 600px;">
+                        <div class="flex items-center justify-between mb-6">
+                            <h2 class="text-2xl font-bold">Редактировать пост</h2>
+                            <button class="glass-btn p-2 rounded-lg text-white/70 hover:text-white transition-colors" onclick="this.closest('.modal-overlay').remove()">
+                                <i data-lucide="x" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                        <div class="space-y-4">
+                            <textarea id="edit-post-content" class="w-full glass px-4 py-3 rounded-lg text-white placeholder-white/40 resize-none outline-none" rows="5">${escapeHtml(content)}</textarea>
+                            <div class="flex justify-end gap-3">
+                                <button class="glass-btn text-white px-6 py-2 rounded-lg" onclick="this.closest('.modal-overlay').remove()">
+                                    Отмена
+                                </button>
+                                <button class="glass-btn-primary text-white px-6 py-2 rounded-lg" onclick="savePostEdit('${postId}')">
+                                    Сохранить
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+                lucide.createIcons();
+                return;
+            }
+            
+            const modal = document.createElement('div');
+            modal.className = 'modal-overlay active';
+            modal.innerHTML = `
+                <div class="glass rounded-2xl p-8 modal-content" style="max-width: 600px;">
+                    <div class="flex items-center justify-between mb-6">
+                        <h2 class="text-2xl font-bold">Редактировать пост</h2>
+                        <button class="glass-btn p-2 rounded-lg text-white/70 hover:text-white transition-colors" onclick="this.closest('.modal-overlay').remove()">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    <div class="space-y-4">
+                        <textarea id="edit-post-content" class="w-full glass px-4 py-3 rounded-lg text-white placeholder-white/40 resize-none outline-none" rows="5">${escapeHtml(post.content)}</textarea>
+                        <div class="flex justify-end gap-3">
+                            <button class="glass-btn text-white px-6 py-2 rounded-lg" onclick="this.closest('.modal-overlay').remove()">
+                                Отмена
+                            </button>
+                            <button class="glass-btn-primary text-white px-6 py-2 rounded-lg" onclick="savePostEdit('${postId}')">
+                                Сохранить
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            lucide.createIcons();
+        }
+        
+        function savePostEdit(postId) {
+            const content = document.getElementById('edit-post-content').value.trim();
+            if (!content) {
+                alert('Пост не может быть пустым');
+                return;
+            }
+            
+            fetch(`${API_URL}/posts/${postId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ content })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    loadPosts();
+                    document.querySelector('.modal-overlay.active').remove();
+                } else {
+                    alert(data.error || 'Ошибка редактирования поста');
+                }
+            })
+            .catch(err => {
+                console.error('Error editing post:', err);
+                alert('Ошибка редактирования поста');
+            });
+        }
+        
+        function deletePost(postId) {
+            if (!confirm('Вы уверены, что хотите удалить этот пост?')) return;
+            
+            fetch(`${API_URL}/posts/${postId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    loadPosts();
+                    loadUserData();
+                } else {
+                    alert(data.error || 'Ошибка удаления поста');
+                }
+            })
+            .catch(err => {
+                console.error('Error deleting post:', err);
+                alert('Ошибка удаления поста');
+            });
+        }
+        
+        function toggleComments(postId) {
+            const expanded = document.getElementById(`expanded-${postId}`);
+            expanded.classList.toggle('active');
+            if (expanded.classList.contains('active')) {
+                loadComments(postId);
+            }
+        }
+        
+        function loadComments(postId) {
+            fetch(`${API_URL}/posts/${postId}/comments`, { credentials: 'include' })
+                .then(res => res.json())
+                .then(comments => {
+                    const container = document.getElementById(`comments-${postId}`);
+                    container.innerHTML = '';
+                    
+                    if (comments.length === 0) {
+                        container.innerHTML = '<div class="text-white/50 text-sm text-center py-4">Нет комментариев</div>';
+                        lucide.createIcons();
+                        return;
+                    }
+                    
+                    comments.forEach(comment => {
+                        const div = document.createElement('div');
+                        div.className = 'glass p-4 rounded-lg comment-item';
+                        const avatarText = (comment.name || comment.username).substring(0, 2).toUpperCase();
+                        const isLiked = comment.liked_by && comment.liked_by.includes(currentUser.username);
+                        div.innerHTML = `
+                            <div class="flex items-start gap-3">
+                                <div class="avatar text-white text-sm cursor-pointer hover:opacity-80" onclick="openUserProfile('${comment.username}')">${avatarText}</div>
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2 mb-2">
+                                        <span class="font-bold text-white text-sm cursor-pointer hover:text-white/80" onclick="openUserProfile('${comment.username}')">${comment.name || comment.username}</span>
+                                        <span class="text-white/40 text-xs cursor-pointer hover:text-white/60" onclick="openUserProfile('${comment.username}')">@${comment.username}</span>
+                                        <span class="text-white/30 text-xs">· ${getTimeAgo(comment.created_at)}</span>
+                                    </div>
+                                    <p class="text-white/80 text-sm mb-2">${escapeHtml(comment.content)}</p>
+                                    ${comment.files && comment.files.length > 0 ? `
+                                        <div class="space-y-2 mb-2">
+                                            ${comment.files.map(file => {
+                                                if (file.type === 'images') {
+                                                    return `<img src="${API_URL.replace('/api', '')}${file.url}" class="rounded-lg max-h-32 w-auto" alt="${file.filename}">`;
+                                                } else {
+                                                    return `<div class="glass p-2 rounded-lg flex items-center gap-2">
+                                                        <i data-lucide="file-code" class="w-4 h-4 text-white/60"></i>
+                                                        <span class="text-white/80 text-xs">${file.filename}</span>
+                                                    </div>`;
+                                                }
+                                            }).join('')}
+                                        </div>
+                                    ` : ''}
+                                    <div class="flex items-center gap-4 mt-3">
+                                        <button class="flex items-center gap-1 text-white/60 hover:text-white transition-colors text-xs" onclick="likeComment('${postId}', '${comment.id}')">
+                                            <i data-lucide="heart" class="w-4 h-4 ${isLiked ? 'fill-red-500 text-red-500' : ''}"></i>
+                                            <span>${comment.likes || 0}</span>
+                                        </button>
+                                        <button class="text-white/60 hover:text-white transition-colors text-xs" onclick="replyToComment('${postId}', '${comment.id}', '${comment.username}')">
+                                            Ответить
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        container.appendChild(div);
+                    });
+                    
+                    lucide.createIcons();
+                })
+                .catch(err => {
+                    console.error('Error loading comments:', err);
+                });
+        }
+        
+        function likeComment(postId, commentId) {
+            fetch(`${API_URL}/posts/${postId}/comments/${commentId}/like`, {
+                method: 'POST',
+                credentials: 'include'
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.likes !== undefined) {
+                    loadComments(postId);
+                }
+            })
+            .catch(err => {
+                console.error('Error liking comment:', err);
+            });
+        }
+        
+        function replyToComment(postId, commentId, username) {
+            const input = document.getElementById(`comment-input-${postId}`);
+            if (input) {
+                input.value = `@${username} `;
+                input.focus();
+            }
+        }
+        
+        // Store comment files per post
+        let commentFiles = {};
+        
+        function handleCommentFile(postId, files, type) {
+            if (!commentFiles[postId]) {
+                commentFiles[postId] = [];
+            }
+            
+            Array.from(files).forEach(file => {
+                uploadFile(file).then(data => {
+                    if (data.success) {
+                        commentFiles[postId].push(data.file);
+                        updateCommentFilesPreview(postId);
+                    }
+                });
+            });
+        }
+        
+        function updateCommentFilesPreview(postId) {
+            const container = document.getElementById(`comment-files-${postId}`);
+            if (!container) return;
+            
+            container.innerHTML = '';
+            if (commentFiles[postId] && commentFiles[postId].length > 0) {
+                commentFiles[postId].forEach((file, index) => {
+                    const div = document.createElement('div');
+                    div.className = 'glass p-2 rounded-lg flex items-center gap-2';
+                    div.innerHTML = `
+                        <i data-lucide="${file.type === 'images' ? 'image' : 'file-code'}" class="w-4 h-4 text-white/60"></i>
+                        <span class="text-white/80 text-xs flex-1">${file.filename}</span>
+                        <button class="glass-btn p-1 rounded text-white/60 hover:text-white" onclick="removeCommentFile('${postId}', ${index})">
+                            <i data-lucide="x" class="w-3 h-3"></i>
+                        </button>
+                    `;
+                    container.appendChild(div);
+                });
+                lucide.createIcons();
+            }
+        }
+        
+        function removeCommentFile(postId, index) {
+            if (commentFiles[postId]) {
+                commentFiles[postId].splice(index, 1);
+                updateCommentFilesPreview(postId);
+            }
+        }
+        
+        function addComment(postId) {
+            const input = document.getElementById(`comment-input-${postId}`);
+            if (!input) return;
+            
+            const content = input.value.trim();
+            const files = commentFiles[postId] || [];
+            
+            if (!content && files.length === 0) return;
+            
+            fetch(`${API_URL}/posts/${postId}/comments`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ content, files })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    input.value = '';
+                    commentFiles[postId] = [];
+                    updateCommentFilesPreview(postId);
+                    loadComments(postId);
+                    loadPosts(); // Refresh to update count
+                } else {
+                    alert(data.error || 'Ошибка добавления комментария');
+                }
+            })
+            .catch(err => {
+                console.error('Error adding comment:', err);
+                alert('Ошибка добавления комментария');
+            });
+        }
+        
+        // Real-time updates (polling every 5 seconds) - but don't reload if comments are open
+        let updateInterval;
+        let openComments = new Set(); // Track which posts have comments open
+        
+        function startRealTimeUpdates() {
+            if (updateInterval) clearInterval(updateInterval);
+            updateInterval = setInterval(() => {
+                if (currentUser && openComments.size === 0) {
+                    // Only reload if no comments are open
+                    loadPosts();
+                }
+            }, 5000);
+        }
+        
+        function stopRealTimeUpdates() {
+            if (updateInterval) {
+                clearInterval(updateInterval);
+                updateInterval = null;
+            }
+        }
+        
+        function likePost(postId) {
+            fetch(`${API_URL}/posts/${postId}/like`, {
+                method: 'POST',
+                credentials: 'include'
+            })
+            .then(res => res.json())
+            .then(data => {
+                loadPosts();
+            });
+        }
+        
+        // File handling
+        function setupFileInputs() {
+            ['file-input', 'video-input', 'code-input'].forEach(id => {
+                document.getElementById(id).addEventListener('change', function(e) {
+                    Array.from(e.target.files).forEach(file => {
+                        uploadFile(file);
+                    });
+                });
+            });
+        }
+        
+        function uploadFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            fetch(`${API_URL}/upload`, {
+                method: 'POST',
+                credentials: 'include',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    attachedFiles.push(data.file);
+                    updateFilesPreview();
+                }
+            });
+        }
+        
+        function updateFilesPreview() {
+            const container = document.getElementById('files-preview');
+            container.innerHTML = '';
+            
+            attachedFiles.forEach((file, index) => {
+                const div = document.createElement('div');
+                div.className = 'file-item glass p-3 rounded-lg relative';
+                
+                if (file.type === 'images') {
+                    div.innerHTML = `
+                        <img src="${API_URL.replace('/api', '')}${file.url}" class="rounded-lg max-h-32 w-full object-contain" alt="${file.filename}">
+                        <div class="file-remove" onclick="removeFile(${index})">
+                            <i data-lucide="x" class="w-4 h-4 text-white"></i>
+                        </div>
+                    `;
+                } else if (file.type === 'videos') {
+                    div.innerHTML = `
+                        <video src="${API_URL.replace('/api', '')}${file.url}" class="rounded-lg max-h-32 w-full" controls></video>
+                        <div class="file-remove" onclick="removeFile(${index})">
+                            <i data-lucide="x" class="w-4 h-4 text-white"></i>
+                        </div>
+                    `;
+                } else {
+                    div.innerHTML = `
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="file-code" class="w-5 h-5 text-white/60"></i>
+                            <span class="text-white/80 text-sm flex-1">${file.filename}</span>
+                        </div>
+                        <div class="file-remove" onclick="removeFile(${index})">
+                            <i data-lucide="x" class="w-4 h-4 text-white"></i>
+                        </div>
+                    `;
+                }
+                
+                container.appendChild(div);
+            });
+            
+            lucide.createIcons();
+        }
+        
+        function removeFile(index) {
+            attachedFiles.splice(index, 1);
+            updateFilesPreview();
+        }
+        
+        function submitPost() {
+            const content = document.getElementById('post-content').value.trim();
+            const btn = document.getElementById('submit-post-btn');
+            
+            if (!content && attachedFiles.length === 0) {
+                alert('Добавьте текст или файлы');
+                return;
+            }
+            
+            btn.innerHTML = '<span class="loading"></span>';
+            btn.disabled = true;
+            
+            fetch(`${API_URL}/posts`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    content,
+                    files: attachedFiles
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    closeCreatePostModal();
+                    document.getElementById('post-content').value = '';
+                    attachedFiles = [];
+                    updateFilesPreview();
+                    loadPosts();
+                    loadUserData();
+                }
+                btn.innerHTML = 'Опубликовать';
+                btn.disabled = false;
+            });
+        }
+        
+        // Modals
+        function closeCreatePostModal() {
+            document.getElementById('create-post-modal').classList.remove('active');
+        }
+        
+        function closeProfileModal() {
+            document.getElementById('profile-modal').classList.remove('active');
+        }
+        
+        function closeSettingsModal() {
+            document.getElementById('settings-modal').classList.remove('active');
+        }
+        
+        document.getElementById('create-post-btn').addEventListener('click', function() {
+            document.getElementById('create-post-modal').classList.add('active');
+        });
+        
+        document.getElementById('profile-btn').addEventListener('click', function() {
+            if (currentUser) {
+                document.getElementById('profile-name').value = currentUser.name;
+                document.getElementById('profile-username').value = currentUser.username;
+                document.getElementById('profile-bio').value = currentUser.bio || '';
+                document.getElementById('profile-language').value = currentUser.language;
+                document.getElementById('profile-modal').classList.add('active');
+            }
+        });
+        
+        document.getElementById('settings-btn').addEventListener('click', function() {
+            loadSettings();
+            document.getElementById('settings-modal').classList.add('active');
+        });
+        
+        function saveProfile() {
+            const name = document.getElementById('profile-name').value;
+            const username = document.getElementById('profile-username').value;
+            const bio = document.getElementById('profile-bio').value;
+            const language = document.getElementById('profile-language').value;
+            
+            fetch(`${API_URL}/user/update`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ name, username, bio, language })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    closeProfileModal();
+                    loadUserData();
+                    loadPosts(); // Reload to filter by new language
+                }
+            });
+        }
+        
+        function saveNotificationSetting(notifications) {
+            // Save only notifications, don't change language
+            fetch(`${API_URL}/settings`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ notifications })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success && currentUser) {
+                    currentUser.notifications = notifications;
+                }
+            })
+            .catch(err => {
+                console.error('Error saving notification setting:', err);
+            });
+        }
+        
+        function saveSettings() {
+            const language = document.getElementById('settings-language').value;
+            const notifications = document.getElementById('settings-notifications').checked;
+            
+            fetch(`${API_URL}/settings`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ language, notifications })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    if (currentUser) {
+                        currentUser.language = language;
+                        currentUser.notifications = notifications;
+                    }
+                    closeSettingsModal();
+                    loadPosts(); // Reload posts with new language filter
+                }
+            })
+            .catch(err => {
+                console.error('Error saving settings:', err);
+                alert('Ошибка сохранения настроек');
+            });
+        }
+        
+        function loadSettings() {
+            fetch(`${API_URL}/settings`, { credentials: 'include' })
+                .then(res => res.json())
+                .then(settings => {
+                    document.getElementById('settings-language').value = settings.language;
+                    document.getElementById('settings-notifications').checked = settings.notifications;
+                    currentTheme = settings.theme || 'dark';
+                    applyTheme(currentTheme);
+                });
+        }
+        
+        // Themes
+        function loadThemes() {
+            fetch(`${API_URL}/themes`, { credentials: 'include' })
+                .then(res => res.json())
+                .then(themes => {
+                    const container = document.getElementById('themes-container');
+                    container.innerHTML = '';
+                    
+                    Object.keys(themes).forEach(key => {
+                        const theme = themes[key];
+                        const div = document.createElement('div');
+                        div.className = `theme-option ${key === currentTheme ? 'active' : ''}`;
+                        div.style.backgroundColor = theme.bg;
+                        div.title = theme.name;
+                        div.onclick = () => selectTheme(key, theme);
+                        container.appendChild(div);
+                    });
+                });
+        }
+        
+        function selectTheme(key, theme) {
+            currentTheme = key;
+            applyTheme(key);
+            
+            // Save to localStorage
+            localStorage.setItem('theme', key);
+            
+            // Save to backend
+            if (currentUser) {
+                fetch(`${API_URL}/settings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ theme: key })
+                });
+            }
+            
+            // Update active state
+            document.querySelectorAll('.theme-option').forEach(el => {
+                el.classList.remove('active');
+            });
+            if (event && event.target) {
+                event.target.classList.add('active');
+            }
+        }
+        
+        function applyTheme(themeKey) {
+            fetch(`${API_URL}/themes`, { credentials: 'include' })
+                .then(res => res.json())
+                .then(themes => {
+                    const theme = themes[themeKey];
+                    if (theme) {
+                        // Apply to root
+                        document.documentElement.style.setProperty('--bg-color', theme.bg);
+                        document.documentElement.style.setProperty('--text-color', theme.text);
+                        document.documentElement.style.setProperty('--glass-bg', theme.glass);
+                        document.documentElement.style.setProperty('--glass-border', theme.border);
+                        if (theme.hover) {
+                            document.documentElement.style.setProperty('--glass-hover', theme.hover);
+                        }
+                        if (theme.primary) {
+                            document.documentElement.style.setProperty('--primary-color', theme.primary);
+                        }
+                        if (theme.secondary) {
+                            document.documentElement.style.setProperty('--secondary-color', theme.secondary);
+                        }
+                        
+                        // Apply to body
+                        document.body.style.backgroundColor = theme.bg;
+                        document.body.style.color = theme.text;
+                        
+                        // Update all glass elements
+                        document.querySelectorAll('.glass').forEach(el => {
+                            el.style.background = theme.glass;
+                            el.style.borderColor = theme.border;
+                        });
+                        
+                        // Update modal overlays
+                        document.querySelectorAll('.modal-overlay').forEach(el => {
+                            el.style.backgroundColor = theme.bg === '#ffffff' ? 'rgba(0, 0, 0, 0.5)' : 'rgba(0, 0, 0, 0.8)';
+                        });
+                    }
+                })
+                .catch(err => {
+                    console.error('Error loading theme:', err);
+                });
+        }
+        
+        // Store chat messages
+        let chatMessages = {};
+        
+        let currentChatId = null;
+        let currentChatUsername = null;
+        let currentChatName = null;
+        
+        function openChat(username, name) {
+            const chatId = currentUser.username < username 
+                ? `${currentUser.username}_${username}` 
+                : `${username}_${currentUser.username}`;
+            
+            currentChatId = chatId;
+            currentChatUsername = username;
+            currentChatName = name;
+            
+            // Hide feed, show chat view
+            document.getElementById('feed-container').classList.add('hidden');
+            document.getElementById('chat-view-container').classList.remove('hidden');
+            document.getElementById('back-to-feed-btn').classList.remove('hidden');
+            
+            // Load messages from backend
+            fetch(`${API_URL}/chats/${chatId}/messages`, {
+                credentials: 'include'
+            })
+            .then(res => res.json())
+            .then(messages => {
+                chatMessages[chatId] = messages || [];
+                renderChatView(chatId, username, name);
+            })
+            .catch(() => {
+                chatMessages[chatId] = [];
+                renderChatView(chatId, username, name);
+            });
+        }
+        
+        function renderChatView(chatId, username, name) {
+            const container = document.getElementById('chat-view-content');
+            container.innerHTML = `
+                <div class="h-full flex flex-col">
+                    <div class="flex items-center justify-between p-4 border-b border-white/10 glass">
+                        <div class="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity" onclick="openUserProfile('${username}')">
+                            <div class="avatar text-white">${(name || username).substring(0, 2).toUpperCase()}</div>
+                            <div>
+                                <div class="font-bold text-white">${name || username}</div>
+                                <div class="text-white/50 text-sm">@${username}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="chat-messages-${chatId}" class="flex-1 overflow-y-auto p-4 space-y-1">
+                        ${renderChatMessages(chatId)}
+                    </div>
+                    <div class="p-4 border-t border-white/10 glass">
+                        <div class="flex items-center gap-2">
+                            <input type="text" id="chat-input-${chatId}" placeholder="Написать сообщение..." class="flex-1 glass px-4 py-3 rounded-full text-white placeholder-white/40 outline-none" onkeydown="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendChatMessage('${chatId}', '${username}'); }">
+                            <button class="glass-btn-primary text-white p-3 rounded-full hover:scale-105 transition-transform" onclick="sendChatMessage('${chatId}', '${username}')" title="Отправить (Enter)">
+                                <i data-lucide="send" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            lucide.createIcons();
+            
+            const input = document.getElementById(`chat-input-${chatId}`);
+            input.focus();
+            
+            // Scroll to bottom
+            setTimeout(() => {
+                const messagesContainer = document.getElementById(`chat-messages-${chatId}`);
+                if (messagesContainer) {
+                    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                }
+            }, 100);
+        }
+        
+        function backToFeed() {
+            document.getElementById('feed-container').classList.remove('hidden');
+            document.getElementById('chat-view-container').classList.add('hidden');
+            document.getElementById('back-to-feed-btn').classList.add('hidden');
+            currentChatId = null;
+            currentChatUsername = null;
+            currentChatName = null;
+        }
+        
+        function renderChatMessages(chatId) {
+            const messages = chatMessages[chatId] || [];
+            if (messages.length === 0) {
+                return '<div class="text-white/50 text-sm text-center py-4" id="chat-empty-message">Начните переписку</div>';
+            }
+            
+            // Remove empty message if exists
+            setTimeout(() => {
+                const emptyMsg = document.getElementById('chat-empty-message');
+                if (emptyMsg && messages.length > 0) {
+                    emptyMsg.remove();
+                }
+            }, 0);
+            
+            return messages.map((msg, index) => {
+                const isOwn = msg.from === currentUser.username;
+                const messageClass = isOwn ? 'justify-end' : 'justify-start';
+                const bgClass = isOwn ? 'bg-white/15' : 'bg-white/10';
+                const maxWidth = 'max-w-[75%]';
+                
+                // Group messages from same user
+                const prevMsg = index > 0 ? messages[index - 1] : null;
+                const showAvatar = !prevMsg || prevMsg.from !== msg.from;
+                const timeDiff = prevMsg ? (new Date(msg.timestamp) - new Date(prevMsg.timestamp)) / 1000 : 300;
+                const showTime = !prevMsg || timeDiff > 300; // 5 minutes
+                
+                const avatarText = (msg.fromName || msg.from).substring(0, 2).toUpperCase();
+                
+                return `
+                    <div class="flex items-end gap-2 ${messageClass} ${maxWidth} ${showAvatar ? 'mt-4' : 'mt-1'}">
+                        ${!isOwn && showAvatar ? `
+                            <div class="avatar text-white text-xs flex-shrink-0 cursor-pointer hover:opacity-80" style="width: 32px; height: 32px; font-size: 0.7rem;" onclick="openUserProfile('${msg.from}')">${avatarText}</div>
+                        ` : !isOwn ? '<div class="w-8"></div>' : ''}
+                        <div class="flex flex-col ${isOwn ? 'items-end' : 'items-start'} flex-1 min-w-0">
+                            ${!isOwn && showAvatar ? `<div class="text-white/50 text-xs mb-1 px-2 cursor-pointer hover:text-white/70" onclick="openUserProfile('${msg.from}')">${msg.fromName || msg.from}</div>` : ''}
+                            <div class="glass ${bgClass} px-4 py-2.5 rounded-2xl ${isOwn ? 'rounded-br-sm' : 'rounded-bl-sm'} break-words shadow-sm">
+                                <div class="text-white text-sm leading-relaxed">${escapeHtml(msg.text)}</div>
+                            </div>
+                            ${showTime ? `<div class="text-white/30 text-xs mt-1 px-2">${msg.time}</div>` : ''}
+                        </div>
+                        ${isOwn ? '<div class="w-8"></div>' : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        function sendChatMessage(chatId, username) {
+            const input = document.getElementById(`chat-input-${chatId}`);
+            const message = input.value.trim();
+            if (!message) return;
+            
+            if (!chatMessages[chatId]) {
+                chatMessages[chatId] = [];
+            }
+            
+            // Send to backend
+            fetch(`${API_URL}/chats/${chatId}/messages`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ text: message })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    chatMessages[chatId].push(data.message);
+                    
+                    // Update UI
+                    const messagesContainer = document.getElementById(`chat-messages-${chatId}`);
+                    if (messagesContainer) {
+                        messagesContainer.innerHTML = renderChatMessages(chatId);
+                        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                        lucide.createIcons();
+                    }
+                    
+                    input.value = '';
+                    loadChats(); // Update chat list
+                }
+            })
+            .catch(err => {
+                console.error('Error sending message:', err);
+                // Add locally anyway
+                const msg = {
+                    from: currentUser.username,
+                    fromName: currentUser.name,
+                    to: username,
+                    text: message,
+                    time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+                    timestamp: new Date().toISOString()
+                };
+                chatMessages[chatId].push(msg);
+                
+                const messagesContainer = document.getElementById(`chat-messages-${chatId}`);
+                messagesContainer.innerHTML = renderChatMessages(chatId);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                lucide.createIcons();
+                input.value = '';
+            });
+        }
+        
+        function closeChat(chatId) {
+            backToFeed();
+        }
+        
+        // Load theme from localStorage on page load
+        function loadSavedTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme) {
+                currentTheme = savedTheme;
+                applyTheme(savedTheme);
+            }
+        }
+        
+        // Call on page load
+        loadSavedTheme();
+        
+        // Separate theme modal
+        document.getElementById('theme-btn').addEventListener('click', function() {
+            loadThemes();
+            document.getElementById('theme-modal').classList.add('active');
+        });
+        
+        function closeThemeModal() {
+            document.getElementById('theme-modal').classList.remove('active');
+        }
+        
+        // Load channels
+        function loadChannels() {
+            fetch(`${API_URL}/channels`, { credentials: 'include' })
+                .then(res => res.json())
+                .then(channels => {
+                    const container = document.getElementById('channels-list');
+                    container.innerHTML = '';
+                    
+                    channels.forEach(ch => {
+                        const div = document.createElement('div');
+                        div.className = 'glass rounded-lg p-3 cursor-pointer glass-hover';
+                        div.innerHTML = `
+                            <div class="flex items-center gap-3">
+                                <div class="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
+                                    <i data-lucide="hash" class="w-4 h-4 text-white"></i>
+                                </div>
+                                <div class="flex-1">
+                                    <div class="font-medium text-white text-sm">${ch.name}</div>
+                                    <div class="text-white/50 text-xs">${ch.members} участников</div>
+                                </div>
+                            </div>
+                        `;
+                        container.appendChild(div);
+                    });
+                    
+                    lucide.createIcons();
+                });
+        }
+        
+        function loadChats() {
+            fetch(`${API_URL}/chats`, { credentials: 'include' })
+                .then(res => res.json())
+                .then(chats => {
+                    const container = document.getElementById('chats-list');
+                    container.innerHTML = '';
+                    
+                    if (chats.length === 0) {
+                        container.innerHTML = '<div class="text-white/50 text-sm text-center py-4">Нет чатов</div>';
+                        return;
+                    }
+                    
+                    chats.forEach(chat => {
+                        const div = document.createElement('div');
+                        div.className = 'glass rounded-lg p-3 cursor-pointer glass-hover';
+                        const avatarText = (chat.name || chat.username).substring(0, 2).toUpperCase();
+                        div.innerHTML = `
+                            <div class="flex items-center gap-3">
+                                <div class="avatar text-white text-sm">${avatarText}</div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="font-medium text-white text-sm truncate">${chat.name || chat.username}</div>
+                                    <div class="text-white/50 text-xs truncate">${chat.last_message || 'Нет сообщений'}</div>
+                                </div>
+                                ${chat.unread > 0 ? `<span class="bg-red-500 text-white text-xs rounded-full px-2 py-0.5">${chat.unread}</span>` : ''}
+                            </div>
+                        `;
+                        div.addEventListener('click', () => {
+                            const chatId = chat.id || (currentUser.username < chat.username 
+                                ? `${currentUser.username}_${chat.username}` 
+                                : `${chat.username}_${currentUser.username}`);
+                            openChat(chat.username, chat.name || chat.username);
+                        });
+                        container.appendChild(div);
+                    });
+                })
+                .catch(err => {
+                    console.error('Error loading chats:', err);
+                });
+        }
+        
+        // Back to feed button
+        document.getElementById('back-to-feed-btn').addEventListener('click', function() {
+            backToFeed();
+        });
+        
+        // Hide/show chats sidebar
+        let chatsSidebarHidden = false;
+        document.getElementById('hide-chats-btn').addEventListener('click', function() {
+            const sidebar = document.getElementById('chats-sidebar');
+            const btn = document.getElementById('hide-chats-btn');
+            if (chatsSidebarHidden) {
+                sidebar.classList.remove('hidden');
+                btn.innerHTML = '<i data-lucide="chevron-right" class="w-4 h-4"></i>';
+                chatsSidebarHidden = false;
+            } else {
+                sidebar.classList.add('hidden');
+                btn.innerHTML = '<i data-lucide="chevron-left" class="w-4 h-4"></i>';
+                chatsSidebarHidden = true;
+            }
+            lucide.createIcons();
+        });
+        
+        // Logout function
+        function logout() {
+            if (confirm('Вы уверены, что хотите выйти?')) {
+                fetch(`${API_URL}/logout`, {
+                    method: 'POST',
+                    credentials: 'include'
+                })
+                .then(() => {
+                    currentUser = null;
+                    localStorage.removeItem('theme');
+                    chatMessages = {};
+                    commentFiles = {};
+                    if (notificationsInterval) {
+                        clearInterval(notificationsInterval);
+                        notificationsInterval = null;
+                    }
+                    showAuthModal();
+                })
+                .catch(err => {
+                    console.error('Logout error:', err);
+                    currentUser = null;
+                    localStorage.removeItem('theme');
+                    chatMessages = {};
+                    commentFiles = {};
+                    if (notificationsInterval) {
+                        clearInterval(notificationsInterval);
+                        notificationsInterval = null;
+                    }
+                    showAuthModal();
+                });
+            }
+        }
+        
+        // Logout buttons
+        document.getElementById('logout-btn-profile').addEventListener('click', function() {
+            closeProfileModal();
+            logout();
+        });
+        document.getElementById('logout-btn-top').addEventListener('click', function() {
+            logout();
+        });
+        
+        // Notifications system
+        let notificationsInterval = null;
+        let unreadNotificationsCount = 0;
+        
+        function loadNotifications() {
+            if (!currentUser) return;
+            fetch(`${API_URL}/notifications`, {
+                credentials: 'include'
+            })
+            .then(res => res.json())
+            .then(data => {
+                unreadNotificationsCount = data.unread_count || 0;
+                updateNotificationsBadge();
+                
+                // Show browser notification for new unread
+                if (unreadNotificationsCount > 0 && 'Notification' in window && Notification.permission === 'granted') {
+                    const unread = data.notifications.filter(n => !n.read).slice(0, 1);
+                    if (unread.length > 0) {
+                        const notif = unread[0];
+                        new Notification('Kvoxy', {
+                            body: notif.type === 'new_message' 
+                                ? `${notif.fromName || notif.from}: ${notif.message || 'Новое сообщение'}`
+                                : notif.type === 'new_post'
+                                ? `Новый пост от ${notif.fromName || notif.from}`
+                                : `Новый комментарий от ${notif.fromName || notif.from}`,
+                            icon: '/favicon.ico'
+                        });
+                    }
+                }
+            })
+            .catch(err => console.error('Error loading notifications:', err));
+        }
+        
+        function updateNotificationsBadge() {
+            const badge = document.getElementById('notifications-badge');
+            if (badge) {
+                if (unreadNotificationsCount > 0) {
+                    badge.textContent = unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount;
+                    badge.classList.remove('hidden');
+                } else {
+                    badge.classList.add('hidden');
+                }
+            }
+        }
+        
+        function showNotificationsModal() {
+            fetch(`${API_URL}/notifications`, {
+                credentials: 'include'
+            })
+            .then(res => res.json())
+            .then(data => {
+                const modal = document.createElement('div');
+                modal.className = 'modal-overlay active';
+                modal.id = 'notifications-modal';
+                modal.innerHTML = `
+                    <div class="glass rounded-2xl modal-content" style="max-width: 500px; max-height: 80vh;">
+                        <div class="flex items-center justify-between p-4 border-b border-white/10">
+                            <h2 class="text-xl font-bold">Уведомления</h2>
+                            <div class="flex items-center gap-2">
+                                <button onclick="markAllNotificationsRead()" class="glass-btn text-white/70 hover:text-white px-3 py-1 rounded text-sm">Отметить все прочитанными</button>
+                                <button onclick="this.closest('.modal-overlay').remove()" class="glass-btn p-2 rounded-lg text-white/70 hover:text-white">
+                                    <i data-lucide="x" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="overflow-y-auto p-4 space-y-2" style="max-height: calc(80vh - 100px);" id="notifications-list">
+                            ${data.notifications.length === 0 
+                                ? '<div class="text-white/50 text-center py-8">Нет уведомлений</div>'
+                                : data.notifications.map(n => `
+                                    <div class="glass p-3 rounded-lg ${n.read ? 'opacity-60' : ''}" onclick="handleNotificationClick('${n.id}', '${n.type || ''}', '${(n.post_id || n.chat_id || '').replace(/'/g, "\\'")}')">
+                                        <div class="flex items-start gap-3">
+                                            <div class="avatar text-white text-xs" style="width: 32px; height: 32px; font-size: 0.7rem;">${(n.fromName || n.from || 'U').substring(0, 2).toUpperCase()}</div>
+                                            <div class="flex-1">
+                                                <div class="text-white text-sm">${getNotificationText(n)}</div>
+                                                <div class="text-white/50 text-xs mt-1">${formatTime(n.timestamp)}</div>
+                                            </div>
+                                            ${!n.read ? '<div class="w-2 h-2 bg-blue-500 rounded-full mt-2"></div>' : ''}
+                                        </div>
+                                    </div>
+                                `).join('')}
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+                lucide.createIcons();
+            })
+            .catch(err => console.error('Error loading notifications:', err));
+        }
+        
+        function getNotificationText(notif) {
+            if (notif.type === 'new_message') {
+                return `${notif.fromName || notif.from}: ${notif.message || 'Новое сообщение'}`;
+            } else if (notif.type === 'new_post') {
+                return `Новый пост от ${notif.fromName || notif.from}`;
+            } else if (notif.type === 'new_comment') {
+                return `Новый комментарий от ${notif.fromName || notif.from}`;
+            }
+            return 'Новое уведомление';
+        }
+        
+        function formatTime(timestamp) {
+            if (!timestamp) return '';
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diff = now - date;
+            const minutes = Math.floor(diff / 60000);
+            const hours = Math.floor(diff / 3600000);
+            const days = Math.floor(diff / 86400000);
+            
+            if (minutes < 1) return 'только что';
+            if (minutes < 60) return `${minutes} мин назад`;
+            if (hours < 24) return `${hours} ч назад`;
+            if (days < 7) return `${days} дн назад`;
+            return date.toLocaleDateString('ru-RU');
+        }
+        
+        function handleNotificationClick(notifId, type, id) {
+            // Mark as read
+            fetch(`${API_URL}/notifications/${notifId}/read`, {
+                method: 'POST',
+                credentials: 'include'
+            })
+            .then(() => {
+                loadNotifications();
+                document.getElementById('notifications-modal')?.remove();
+                
+                // Navigate based on type
+                if (type === 'new_message' && id) {
+                    // Extract username from chat_id
+                    const usernames = id.split('_');
+                    const otherUser = usernames[0] === currentUser.username ? usernames[1] : usernames[0];
+                    openChat(otherUser, otherUser);
+                } else if (type === 'new_post' || type === 'new_comment') {
+                    backToFeed();
+                    loadPosts();
+                }
+            });
+        }
+        
+        function markAllNotificationsRead() {
+            fetch(`${API_URL}/notifications/read-all`, {
+                method: 'POST',
+                credentials: 'include'
+            })
+            .then(() => {
+                loadNotifications();
+                showNotificationsModal();
+            });
+        }
+        
+        window.handleNotificationClick = handleNotificationClick;
+        window.markAllNotificationsRead = markAllNotificationsRead;
+        
+        // Notifications button
+        document.getElementById('notifications-btn').addEventListener('click', function() {
+            showNotificationsModal();
+        });
+        
+        // Request notification permission
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+        
+        // Start polling notifications when user is loaded
+        // This will be called in loadUserData
+        
+        // Search users
+        let searchTimeout;
+        document.getElementById('search-users-input').addEventListener('input', function(e) {
+            clearTimeout(searchTimeout);
+            const query = e.target.value.trim();
+            const resultsContainer = document.getElementById('search-results');
+            
+            if (query.length < 2) {
+                resultsContainer.innerHTML = '';
+                return;
+            }
+            
+            searchTimeout = setTimeout(() => {
+                fetch(`${API_URL}/search/users?q=${encodeURIComponent(query)}`, {
+                    credentials: 'include'
+                })
+                .then(res => res.json())
+                .then(users => {
+                    resultsContainer.innerHTML = '';
+                    if (users.length === 0) {
+                        resultsContainer.innerHTML = '<div class="text-white/50 text-sm text-center py-4">Пользователи не найдены</div>';
+                        return;
+                    }
+                    users.forEach(user => {
+                        const div = document.createElement('div');
+                        div.className = 'glass p-3 rounded-lg cursor-pointer hover:bg-white/5 transition-colors';
+                        div.innerHTML = `
+                            <div class="flex items-center gap-3">
+                                <div class="avatar text-white" style="width: 32px; height: 32px; font-size: 0.75rem;">${(user.name || user.username).substring(0, 2).toUpperCase()}</div>
+                                <div class="flex-1">
+                                    <div class="font-medium text-white text-sm">${user.name || user.username}</div>
+                                    <div class="text-white/50 text-xs">@${user.username}</div>
+                                </div>
+                                <button class="glass-btn p-1.5 rounded text-white/60 hover:text-white" onclick="createChatWithUser('${user.username}')" title="Создать чат">
+                                    <i data-lucide="message-circle" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        `;
+                        div.addEventListener('click', function(e) {
+                            if (!e.target.closest('button')) {
+                                openUserProfile(user.username);
+                            }
+                        });
+                        resultsContainer.appendChild(div);
+                    });
+                    lucide.createIcons();
+                })
+                .catch(err => {
+                    console.error('Search error:', err);
+                });
+            }, 300);
+        });
+        
+        // Create chat button
+        document.getElementById('create-chat-btn').addEventListener('click', function() {
+            document.getElementById('search-users-input').focus();
+        });
+        
+        function createChatWithUser(username) {
+            fetch(`${API_URL}/chats`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ username })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    loadChats();
+                    document.getElementById('search-users-input').value = '';
+                    document.getElementById('search-results').innerHTML = '';
+                    // Open chat immediately
+                    fetch(`${API_URL}/user/${username}`, { credentials: 'include' })
+                        .then(res => res.json())
+                        .then(user => {
+                            openChat(username, user.name || username);
+                        })
+                        .catch(() => {
+                            openChat(username, username);
+                        });
+                } else {
+                    alert(data.error || 'Ошибка создания чата');
+                }
+            })
+            .catch(err => {
+                console.error('Create chat error:', err);
+                // Open chat anyway
+                openChat(username, username);
+            });
+        }
+        
+        function openUserProfile(username) {
+            fetch(`${API_URL}/user/${username}`, {
+                credentials: 'include'
+            })
+            .then(res => res.json())
+            .then(user => {
+                const modal = document.createElement('div');
+                modal.className = 'modal-overlay active';
+                modal.innerHTML = `
+                    <div class="glass rounded-2xl p-8 modal-content" style="max-width: 500px;">
+                        <div class="flex items-center justify-between mb-6">
+                            <h2 class="text-2xl font-bold">Профиль пользователя</h2>
+                            <button class="glass-btn p-2 rounded-lg text-white/70 hover:text-white transition-colors" onclick="this.closest('.modal-overlay').remove()">
+                                <i data-lucide="x" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                        <div class="space-y-6">
+                            <div class="flex items-center gap-4">
+                                <div class="avatar text-white" style="width: 80px; height: 80px; font-size: 2rem;">${(user.name || user.username).substring(0, 2).toUpperCase()}</div>
+                                <div>
+                                    <div class="font-bold text-white text-xl">${user.name || user.username}</div>
+                                    <div class="text-white/50 text-sm">@${user.username}</div>
+                                    <div class="text-white/60 text-sm mt-1">${getLanguageName(user.language)}</div>
+                                </div>
+                            </div>
+                            ${user.bio ? `<p class="text-white/70">${escapeHtml(user.bio)}</p>` : ''}
+                            <div class="flex items-center gap-6 text-sm">
+                                <div>
+                                    <div class="font-bold text-white">${user.posts_count || 0}</div>
+                                    <div class="text-white/50">Постов</div>
+                                </div>
+                                <div>
+                                    <div class="font-bold text-white">${user.followers || 0}</div>
+                                    <div class="text-white/50">Подписчиков</div>
+                                </div>
+                                <div>
+                                    <div class="font-bold text-white">${user.following || 0}</div>
+                                    <div class="text-white/50">Подписок</div>
+                                </div>
+                            </div>
+                            ${user.username !== currentUser.username ? `
+                                <button class="w-full glass-btn-primary text-white px-6 py-3 rounded-lg font-medium" onclick="createChatWithUser('${user.username}'); this.closest('.modal-overlay').remove();">
+                                    <i data-lucide="message-circle" class="w-4 h-4 inline mr-2"></i>
+                                    Создать чат
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+                lucide.createIcons();
+            })
+            .catch(err => {
+                console.error('Error loading user profile:', err);
+                alert('Ошибка загрузки профиля');
+            });
+        }
+        
+        // Remove channels loading
+        function loadChannels() {
+            // Channels removed - no longer needed
+        }
+        
+        // Initialize file inputs
+        setupFileInputs();
+        
+        // Close modals on overlay click (but not auth modal)
+        document.querySelectorAll('.modal-overlay').forEach(modal => {
+            modal.addEventListener('click', function(e) {
+                if (e.target === this && this.id !== 'auth-modal') {
+                    this.classList.remove('active');
+                }
+            });
+        });
+        
+        // Prevent auth modal from closing on click
+        document.getElementById('auth-modal')?.addEventListener('click', function(e) {
+            e.stopPropagation();
+        });
+        
+        // Unique Feature: Live Code Preview
+        function previewCode(fileUrl, ext) {
+            const fullUrl = API_URL.replace('/api', '') + fileUrl;
+            fetch(fullUrl)
+                .then(res => {
+                    if (!res.ok) throw new Error('Failed to load file');
+                    return res.text();
+                })
+                .then(code => {
+                    // Create preview modal
+                    const modal = document.createElement('div');
+                    modal.className = 'modal-overlay active';
+                    
+                    let contentHtml = '';
+                    if (ext === 'html') {
+                        // For HTML, show both code and live preview
+                        contentHtml = `
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <div class="text-white/70 text-sm mb-2">Код:</div>
+                                    <pre class="bg-black/50 p-4 rounded-lg text-white/90 text-xs overflow-auto max-h-96">${escapeHtml(code)}</pre>
+                                </div>
+                                <div>
+                                    <div class="text-white/70 text-sm mb-2">Live Preview:</div>
+                                    <iframe id="html-preview" style="width: 100%; height: 400px; border: none; background: white; border-radius: 8px;"></iframe>
+                                </div>
+                            </div>
+                        `;
+                    } else if (ext === 'js' || ext === 'css') {
+                        contentHtml = '<pre class="bg-black/50 p-4 rounded-lg text-white/90 text-sm overflow-auto max-h-96">' + escapeHtml(code) + '</pre>';
+                    } else {
+                        contentHtml = '<pre class="bg-black/50 p-4 rounded-lg text-white/90 text-sm overflow-auto max-h-96">' + escapeHtml(code) + '</pre>';
+                    }
+                    
+                    modal.innerHTML = `
+                        <div class="glass rounded-2xl p-6 modal-content" style="max-width: 1200px;">
+                            <div class="flex items-center justify-between mb-4">
+                                <h3 class="text-xl font-bold">Просмотр файла</h3>
+                                <div class="flex items-center gap-2">
+                                    <a href="${fullUrl}" download class="glass-btn p-2 rounded-lg text-white/70 hover:text-white" title="Скачать">
+                                        <i data-lucide="download" class="w-5 h-5"></i>
+                                    </a>
+                                    <button class="glass-btn p-2 rounded-lg text-white/70 hover:text-white" onclick="this.closest('.modal-overlay').remove()">
+                                        <i data-lucide="x" class="w-5 h-5"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="live-preview">
+                                <div class="live-preview-content">
+                                    ${contentHtml}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    document.body.appendChild(modal);
+                    lucide.createIcons();
+                    
+                    // If HTML, create iframe for live preview
+                    if (ext === 'html') {
+                        const blob = new Blob([code], { type: 'text/html' });
+                        const url = URL.createObjectURL(blob);
+                        const iframe = modal.querySelector('#html-preview');
+                        if (iframe) {
+                            iframe.src = url;
+                        }
+                    }
+                })
+                .catch(err => {
+                    console.error('Error loading code:', err);
+                    alert('Ошибка загрузки файла: ' + err.message);
+                });
+        }
+        
+        // Make previewCode global
+        window.previewCode = previewCode;
+    </script>
+</body>
+</html>
