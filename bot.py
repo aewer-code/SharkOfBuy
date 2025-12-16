@@ -13,9 +13,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    LabeledPrice, PreCheckoutQuery, ContentType, ReplyKeyboardMarkup, KeyboardButton,
-    ChatMemberStatus
+    LabeledPrice, PreCheckoutQuery, ContentType, ReplyKeyboardMarkup, KeyboardButton
 )
+from aiogram.enums import ChatMemberStatus
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
@@ -98,7 +98,9 @@ class Database:
             "stats": {"total_orders": 0, "total_revenue": 0},
             "subscribed_users": [],  # Список пользователей, прошедших проверку подписки
             "referrals": {},  # Реферальная система: {user_id: [список рефералов]}
-            "promo_codes": {}  # Промокоды: {code: {"discount": 10, "uses": 0, "max_uses": 100}}
+            "promo_codes": {},  # Промокоды: {code: {"discount": 10, "uses": 0, "max_uses": 100}}
+            "users": {},  # Пользователи: {user_id: {"balance": 0, "username": "..."}}
+            "all_users": []  # Список всех user_id для рассылки
         }
 
     def save(self):
@@ -274,6 +276,59 @@ class Database:
     def get_referrals(self, user_id):
         """Получить список рефералов"""
         return self.data.get("referrals", {}).get(user_id, [])
+    
+    def register_user(self, user_id, username=None):
+        """Регистрация пользователя в системе"""
+        if "users" not in self.data:
+            self.data["users"] = {}
+        if "all_users" not in self.data:
+            self.data["all_users"] = []
+        
+        user_id_str = str(user_id)
+        if user_id_str not in self.data["users"]:
+            self.data["users"][user_id_str] = {
+                "balance": 0,
+                "username": username,
+                "registered_at": datetime.now().isoformat()
+            }
+        
+        if user_id not in self.data["all_users"]:
+            self.data["all_users"].append(user_id)
+        
+        self.save()
+    
+    def get_balance(self, user_id):
+        """Получить баланс пользователя"""
+        user_id_str = str(user_id)
+        return self.data.get("users", {}).get(user_id_str, {}).get("balance", 0)
+    
+    def add_balance(self, user_id, amount):
+        """Добавить средства на баланс"""
+        user_id_str = str(user_id)
+        if "users" not in self.data:
+            self.data["users"] = {}
+        if user_id_str not in self.data["users"]:
+            self.register_user(user_id)
+        
+        self.data["users"][user_id_str]["balance"] = self.data["users"][user_id_str].get("balance", 0) + amount
+        self.save()
+        return self.data["users"][user_id_str]["balance"]
+    
+    def subtract_balance(self, user_id, amount):
+        """Снять средства с баланса"""
+        user_id_str = str(user_id)
+        current_balance = self.get_balance(user_id)
+        
+        if current_balance < amount:
+            return False
+        
+        self.data["users"][user_id_str]["balance"] = current_balance - amount
+        self.save()
+        return True
+    
+    def get_all_users(self):
+        """Получить список всех пользователей для рассылки"""
+        return self.data.get("all_users", [])
 
 
 db = Database()
@@ -301,10 +356,10 @@ PRODUCTS_PER_PAGE = 5
 def get_main_reply_keyboard():
     """Главная Reply клавиатура после подписки"""
     keyboard = [
-        [KeyboardButton(text="🛍️ Каталог товаров"), KeyboardButton(text="🎁 Получить подарок")],
-        [KeyboardButton(text="📜 Мои заказы"), KeyboardButton(text="🎯 Реферальная программа")],
-        [KeyboardButton(text="❓ FAQ"), KeyboardButton(text="💬 Поддержка")],
-        [KeyboardButton(text="ℹ️ О боте")]
+        [KeyboardButton(text="🛍️ Каталог товаров"), KeyboardButton(text="👤 Личный кабинет")],
+        [KeyboardButton(text="🎁 Получить подарок"), KeyboardButton(text="📜 Мои заказы")],
+        [KeyboardButton(text="🎯 Реферальная программа"), KeyboardButton(text="❓ FAQ")],
+        [KeyboardButton(text="💬 Поддержка"), KeyboardButton(text="ℹ️ О боте")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -442,12 +497,18 @@ async def cmd_start(message: Message):
                 # Пользователь подписан, добавляем в БД
                 db.add_subscribed_user(user_id)
         
+        # Регистрируем пользователя в системе
+        db.register_user(user_id, message.from_user.username)
+        
         # Пользователь подписан - показываем приветствие
+        balance = db.get_balance(user_id)
         welcome_text = (
             "🎉 <b>Добро пожаловать в бота Shark Of Buy!</b>\n\n"
             "⚡ <i>Быстро</i> • 🔒 <i>Надежно</i> • ✅ <i>Безопасно</i>\n\n"
+            f"💰 <b>Ваш баланс:</b> {balance} ⭐\n\n"
             "📋 <b>Доступные команды:</b>\n"
             "🛍️ /buy - Каталог товаров\n"
+            "👤 /profile - Личный кабинет\n"
             "📜 /myorders - Мои заказы\n"
             "🎯 /referral - Реферальная программа\n"
             "❓ /faq - Частые вопросы\n"
@@ -526,6 +587,133 @@ async def cmd_help(message: Message):
         "💡 <b>Вопросы?</b> Обратитесь к администратору."
     )
     await message.answer(help_text, parse_mode=ParseMode.HTML)
+
+
+@router.message(Command("profile"))
+@router.message(F.text == "👤 Личный кабинет")
+async def cmd_profile(message: Message):
+    """Личный кабинет пользователя"""
+    user_id = message.from_user.id
+    balance = db.get_balance(user_id)
+    orders_count = len(db.get_user_orders(user_id))
+    referrals_count = len(db.get_referrals(user_id))
+    
+    text = (
+        "👤 <b>Личный кабинет</b>\n\n"
+        f"🆔 ID: <code>{user_id}</code>\n"
+        f"👤 Имя: @{message.from_user.username or 'Без username'}\n\n"
+        f"💰 <b>Баланс:</b> {balance} ⭐\n"
+        f"📦 <b>Заказов:</b> {orders_count}\n"
+        f"👥 <b>Рефералов:</b> {referrals_count}\n\n"
+        "💡 <i>Пополните баланс и покупайте товары за звезды внутри бота!</i>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="topup_balance")],
+        [InlineKeyboardButton(text="📜 Мои заказы", callback_data="my_orders")],
+        [InlineKeyboardButton(text="🎯 Реферальная программа", callback_data="referral_program")]
+    ])
+    
+    await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+
+@router.callback_query(F.data == "topup_balance")
+async def process_topup_balance(callback: CallbackQuery):
+    """Выбор суммы пополнения"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⭐ 10 звезд", callback_data="topup_10")],
+        [InlineKeyboardButton(text="⭐ 50 звезд", callback_data="topup_50")],
+        [InlineKeyboardButton(text="⭐ 100 звезд", callback_data="topup_100")],
+        [InlineKeyboardButton(text="⭐ 250 звезд", callback_data="topup_250")],
+        [InlineKeyboardButton(text="⭐ 500 звезд", callback_data="topup_500")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_profile")]
+    ])
+    
+    await callback.message.edit_text(
+        "💰 <b>Пополнение баланса</b>\n\n"
+        "Выберите сумму пополнения:\n\n"
+        "💡 <i>Звезды будут конвертированы в баланс 1:1</i>",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("topup_"))
+async def process_topup_amount(callback: CallbackQuery):
+    """Обработка пополнения баланса"""
+    try:
+        if callback.data == "topup_balance":
+            return
+        
+        amount = int(callback.data.replace("topup_", ""))
+        
+        prices = [LabeledPrice(label=f"Пополнение баланса на {amount} ⭐", amount=amount)]
+        
+        await callback.message.answer_invoice(
+            title=f"💰 Пополнение баланса",
+            description=f"Пополнение баланса на {amount} звезд",
+            payload=f"topup_{amount}",
+            provider_token="",
+            currency="XTR",
+            prices=prices
+        )
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"Ошибка пополнения: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data == "back_to_profile")
+async def back_to_profile(callback: CallbackQuery):
+    """Вернуться в личный кабинет"""
+    user_id = callback.from_user.id
+    balance = db.get_balance(user_id)
+    orders_count = len(db.get_user_orders(user_id))
+    referrals_count = len(db.get_referrals(user_id))
+    
+    text = (
+        "👤 <b>Личный кабинет</b>\n\n"
+        f"🆔 ID: <code>{user_id}</code>\n"
+        f"👤 Имя: @{callback.from_user.username or 'Без username'}\n\n"
+        f"💰 <b>Баланс:</b> {balance} ⭐\n"
+        f"📦 <b>Заказов:</b> {orders_count}\n"
+        f"👥 <b>Рефералов:</b> {referrals_count}\n\n"
+        "💡 <i>Пополните баланс и покупайте товары за звезды внутри бота!</i>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="topup_balance")],
+        [InlineKeyboardButton(text="📜 Мои заказы", callback_data="my_orders")],
+        [InlineKeyboardButton(text="🎯 Реферальная программа", callback_data="referral_program")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "referral_program")
+async def process_referral_program(callback: CallbackQuery):
+    """Реферальная программа из callback"""
+    user_id = callback.from_user.id
+    referrals = db.get_referrals(user_id)
+    referral_link = f"https://t.me/{(await callback.bot.get_me()).username}?start=ref_{user_id}"
+    
+    text = (
+        "🎯 <b>Реферальная программа</b>\n\n"
+        "🎁 Приглашайте друзей и получайте бонусы!\n\n"
+        f"👥 Ваших рефералов: <b>{len(referrals)}</b>\n\n"
+        f"🔗 <b>Ваша реферальная ссылка:</b>\n"
+        f"<code>{referral_link}</code>\n\n"
+        "💡 <i>За каждого друга вы получите бонус!</i>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_profile")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
 
 
 @router.message(Command("buy"))
@@ -673,12 +861,114 @@ async def cmd_admin(message: Message):
         logger.warning(f"Попытка доступа к админ-панели от {message.from_user.id}")
         return
 
+    total_users = len(db.get_all_users())
     await message.answer(
-        "<b>🔧 Админ-панель</b>\n\nВыберите действие:",
+        f"<b>🔧 Админ-панель</b>\n\n"
+        f"👥 Всего пользователей: {total_users}\n\n"
+        f"Выберите действие:",
         reply_markup=get_admin_keyboard(),
         parse_mode=ParseMode.HTML
     )
     logger.info(f"Админ {message.from_user.id} открыл админ-панель")
+
+
+@router.message(Command("send"))
+async def cmd_send(message: Message):
+    """Рассылка сообщений всем пользователям"""
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ У вас нет доступа!")
+        return
+    
+    # Получаем текст после команды
+    text = message.text.replace("/send", "").strip()
+    
+    if not text:
+        await message.answer(
+            "📢 <b>Рассылка сообщений</b>\n\n"
+            "Использование:\n"
+            "<code>/send Ваше сообщение</code>\n\n"
+            "Сообщение будет отправлено всем пользователям бота.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    all_users = db.get_all_users()
+    
+    if not all_users:
+        await message.answer("❌ Нет пользователей для рассылки!")
+        return
+    
+    # Подтверждение рассылки
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да, отправить", callback_data=f"broadcast_confirm")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast_cancel")]
+    ])
+    
+    # Сохраняем текст рассылки временно
+    if not hasattr(message.bot, "_broadcast_text"):
+        message.bot._broadcast_text = {}
+    message.bot._broadcast_text[message.from_user.id] = text
+    
+    await message.answer(
+        f"📢 <b>Подтверждение рассылки</b>\n\n"
+        f"Сообщение будет отправлено <b>{len(all_users)}</b> пользователям:\n\n"
+        f"<i>{text[:200]}{'...' if len(text) > 200 else ''}</i>\n\n"
+        f"Вы уверены?",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
+
+
+@router.callback_query(F.data == "broadcast_confirm")
+async def process_broadcast_confirm(callback: CallbackQuery):
+    """Подтверждение и выполнение рассылки"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа!", show_alert=True)
+        return
+    
+    # Получаем текст рассылки
+    text = callback.bot._broadcast_text.get(callback.from_user.id)
+    if not text:
+        await callback.answer("❌ Текст рассылки не найден!", show_alert=True)
+        return
+    
+    await callback.message.edit_text("📤 <b>Рассылка началась...</b>", parse_mode=ParseMode.HTML)
+    
+    all_users = db.get_all_users()
+    success = 0
+    failed = 0
+    
+    for user_id in all_users:
+        try:
+            await callback.bot.send_message(user_id, text, parse_mode=ParseMode.HTML)
+            success += 1
+            await asyncio.sleep(0.05)  # Задержка для избежания flood control
+        except Exception as e:
+            failed += 1
+            logger.error(f"Ошибка рассылки пользователю {user_id}: {e}")
+    
+    # Удаляем сохраненный текст
+    del callback.bot._broadcast_text[callback.from_user.id]
+    
+    await callback.message.edit_text(
+        f"✅ <b>Рассылка завершена!</b>\n\n"
+        f"✅ Успешно: {success}\n"
+        f"❌ Ошибок: {failed}\n"
+        f"📊 Всего: {len(all_users)}",
+        parse_mode=ParseMode.HTML
+    )
+    
+    logger.info(f"Админ {callback.from_user.id} выполнил рассылку: {success} успешно, {failed} ошибок")
+
+
+@router.callback_query(F.data == "broadcast_cancel")
+async def process_broadcast_cancel(callback: CallbackQuery):
+    """Отмена рассылки"""
+    if callback.bot._broadcast_text and callback.from_user.id in callback.bot._broadcast_text:
+        del callback.bot._broadcast_text[callback.from_user.id]
+    
+    await callback.message.edit_text("❌ Рассылка отменена", parse_mode=ParseMode.HTML)
+    await callback.answer()
 
 
 # ============= ПОКУПКА ТОВАРА =============
@@ -718,7 +1008,154 @@ async def process_buy(callback: CallbackQuery):
             )
             return
 
-        # Обычная оплата для платных товаров
+        # Проверяем баланс пользователя
+        user_balance = db.get_balance(callback.from_user.id)
+        
+        # Выбор способа оплаты
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"💰 Баланс ({user_balance} ⭐)", callback_data=f"pay_balance_{product_id}")],
+            [InlineKeyboardButton(text="⭐ Telegram Stars", callback_data=f"pay_stars_{product_id}")]
+        ])
+        
+        await callback.message.answer(
+            f"🛍 <b>{product['name']}</b>\n\n"
+            f"💰 Цена: {product['price']} ⭐\n\n"
+            "Выберите способ оплаты:",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при покупке: {e}")
+        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+
+
+@router.callback_query(F.data.startswith("pay_balance_"))
+async def process_pay_with_balance(callback: CallbackQuery):
+    """Оплата товара балансом"""
+    try:
+        product_id = callback.data.replace("pay_balance_", "")
+        product = db.get_product(product_id)
+        
+        if not product:
+            await callback.answer("❌ Товар не найден!", show_alert=True)
+            return
+        
+        user_id = callback.from_user.id
+        balance = db.get_balance(user_id)
+        price = product["price"]
+        
+        if balance < price:
+            await callback.answer(
+                f"❌ Недостаточно средств!\n\n"
+                f"Ваш баланс: {balance} ⭐\n"
+                f"Нужно: {price} ⭐\n\n"
+                "Пополните баланс в личном кабинете!",
+                show_alert=True
+            )
+            return
+        
+        # Списываем средства
+        if not db.subtract_balance(user_id, price):
+            await callback.answer("❌ Ошибка списания средств!", show_alert=True)
+            return
+        
+        await callback.answer("✅ Оплачено!", show_alert=True)
+        
+        # Выдаем товар
+        delivery_type = product.get("delivery_type", "auto")
+        
+        await callback.message.answer(
+            f"✅ <b>Спасибо за покупку!</b>\n\n"
+            f"Товар: {product['name']}\n"
+            f"Цена: {price} ⭐\n"
+            f"Списано с баланса: {price} ⭐\n"
+            f"Остаток: {db.get_balance(user_id)} ⭐",
+            parse_mode=ParseMode.HTML
+        )
+        
+        if delivery_type == "manual":
+            # Ручная выдача
+            pending = db.add_pending_order(
+                user_id,
+                callback.from_user.username or "Без username",
+                product_id,
+                product["name"],
+                price
+            )
+            
+            await callback.message.answer(
+                "⏳ <b>Ваш заказ принят!</b>\n\n"
+                "Товар будет выдан вручную администратором.",
+                parse_mode=ParseMode.HTML
+            )
+            
+            for admin_id in ADMIN_IDS:
+                try:
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="✅ Выдать товар", callback_data=f"deliver_{pending['order_id']}")]
+                    ])
+                    await callback.bot.send_message(
+                        admin_id,
+                        f"🔔 <b>Новый заказ (оплата балансом)!</b>\n\n"
+                        f"Товар: {product['name']}\n"
+                        f"Цена: {price} ⭐\n"
+                        f"Покупатель: @{callback.from_user.username or callback.from_user.id}",
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=keyboard
+                    )
+                except:
+                    pass
+            
+            db.add_order(user_id, callback.from_user.username or "Без username",
+                        product_id, product["name"], price, status="pending")
+        else:
+            # Автоматическая выдача
+            material = product["material"]
+            if material["type"] == "text":
+                await callback.message.answer(f"📄 <b>Ваш материал:</b>\n\n{material['content']}", parse_mode=ParseMode.HTML)
+            elif material["type"] == "file":
+                await callback.message.answer_document(document=material["file_id"], caption="📄 Ваш материал")
+            elif material["type"] == "photo":
+                await callback.message.answer_photo(photo=material["file_id"], caption="📄 Ваш материал")
+            elif material["type"] == "video":
+                await callback.message.answer_video(video=material["file_id"], caption="📄 Ваш материал")
+            
+            for admin_id in ADMIN_IDS:
+                try:
+                    await callback.bot.send_message(
+                        admin_id,
+                        f"💰 <b>Продажа (баланс)!</b>\n\n"
+                        f"Товар: {product['name']}\n"
+                        f"Цена: {price} ⭐\n"
+                        f"Покупатель: @{callback.from_user.username or callback.from_user.id}",
+                        parse_mode=ParseMode.HTML
+                    )
+                except:
+                    pass
+            
+            db.add_order(user_id, callback.from_user.username or "Без username",
+                        product_id, product["name"], price, status="completed")
+        
+        # Уменьшаем остаток
+        db.decrease_stock(product_id)
+        logger.info(f"Товар {product_id} куплен за баланс пользователем {user_id}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка оплаты балансом: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("pay_stars_"))
+async def process_pay_with_stars(callback: CallbackQuery):
+    """Оплата товара Telegram Stars"""
+    try:
+        product_id = callback.data.replace("pay_stars_", "")
+        product = db.get_product(product_id)
+        
+        if not product:
+            await callback.answer("❌ Товар не найден!", show_alert=True)
+            return
+        
         price = max(1, product["price"])
         prices = [LabeledPrice(label=product["name"], amount=price)]
 
@@ -730,9 +1167,10 @@ async def process_buy(callback: CallbackQuery):
             currency="XTR",
             prices=prices
         )
+        await callback.answer()
     except Exception as e:
-        logger.error(f"Ошибка при покупке: {e}")
-        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+        logger.error(f"Ошибка оплаты звездами: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("get_free_"))
@@ -900,6 +1338,38 @@ async def process_successful_payment(message: Message):
     try:
         payment = message.successful_payment
         payload = payment.invoice_payload
+        
+        # Проверяем тип платежа
+        if payload.startswith("topup_"):
+            # Пополнение баланса
+            amount = int(payload.replace("topup_", ""))
+            user_id = message.from_user.id
+            
+            new_balance = db.add_balance(user_id, amount)
+            
+            await message.answer(
+                f"✅ <b>Баланс пополнен!</b>\n\n"
+                f"💰 Зачислено: {amount} ⭐\n"
+                f"💳 Новый баланс: {new_balance} ⭐\n\n"
+                f"Теперь вы можете покупать товары за баланс!",
+                parse_mode=ParseMode.HTML
+            )
+            
+            logger.info(f"Пользователь {user_id} пополнил баланс на {amount} звезд")
+            
+            # Уведомляем админов
+            for admin_id in ADMIN_IDS:
+                try:
+                    await message.bot.send_message(
+                        admin_id,
+                        f"💰 <b>Пополнение баланса!</b>\n\n"
+                        f"Пользователь: @{message.from_user.username or message.from_user.id}\n"
+                        f"Сумма: {amount} ⭐",
+                        parse_mode=ParseMode.HTML
+                    )
+                except:
+                    pass
+            return
         
         # Проверяем, это подарок или товар
         if payload == "gift_bear":
