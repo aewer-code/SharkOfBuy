@@ -13,8 +13,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    LabeledPrice, PreCheckoutQuery, ContentType, ReplyKeyboardMarkup, KeyboardButton,
-    WebAppInfo
+    LabeledPrice, PreCheckoutQuery, ContentType, ReplyKeyboardMarkup, KeyboardButton
 )
 from aiogram.enums import ChatMemberStatus
 from aiogram.client.default import DefaultBotProperties
@@ -399,11 +398,7 @@ PRODUCTS_PER_PAGE = 5
 
 def get_main_reply_keyboard():
     """Главная Reply клавиатура после подписки"""
-    # Получаем URL веб-приложения из переменных окружения или используем дефолтный
-    webapp_url = os.getenv("WEBAPP_URL", "https://sharkofbuy-production.up.railway.app")
-    
     keyboard = [
-        [KeyboardButton(text="🌐 Открыть магазин", web_app=WebAppInfo(url=webapp_url))],
         [KeyboardButton(text="🛍️ Каталог товаров"), KeyboardButton(text="👤 Личный кабинет")],
         [KeyboardButton(text="🎁 Получить подарок"), KeyboardButton(text="📜 Мои заказы")],
         [KeyboardButton(text="🎯 Реферальная программа"), KeyboardButton(text="❓ FAQ")],
