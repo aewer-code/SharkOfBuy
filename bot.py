@@ -131,7 +131,7 @@ class Database:
             raise
 
     def add_product(self, product_id, name, description, price, material, category="Без категории", 
-                    delivery_type="auto", stock=None):
+                    delivery_type="auto", stock=None, owner_id=None):
         self.data["products"][product_id] = {
             "name": name,
             "description": description,
@@ -140,6 +140,7 @@ class Database:
             "category": category,
             "delivery_type": delivery_type,  # "auto" или "manual"
             "stock": stock,  # None = безлимит, число = остаток
+            "owner_id": owner_id,  # ID владельца товара (None = админ)
             "created_at": datetime.now().isoformat()
         }
         self.save()
@@ -277,7 +278,7 @@ class Database:
         pending = next((p for p in self.data.get("pending_products", []) 
                        if p.get("product_id") == product_id), None)
         if pending:
-            # Добавляем в каталог
+            # Добавляем в каталог с указанием владельца
             self.add_product(
                 pending["product_id"],
                 pending["name"],
@@ -286,7 +287,8 @@ class Database:
                 pending["material"],
                 pending.get("category", "Без категории"),
                 pending.get("delivery_type", "auto"),
-                pending.get("stock", None)
+                pending.get("stock", None),
+                owner_id=pending.get("user_id")  # Сохраняем владельца товара
             )
             # Удаляем из очереди модерации
             self.remove_pending_product(product_id)
@@ -815,7 +817,12 @@ async def cmd_profile(message: Message):
 
 @router.callback_query(F.data == "topup_balance")
 async def process_topup_balance(callback: CallbackQuery):
-    """Выбор суммы пополнения"""
+    """Выбор суммы пополнения (только для админов)"""
+    # Обычные пользователи не могут пополнять баланс
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Пополнение баланса недоступно! Зарабатывайте на продаже товаров.", show_alert=True)
+        return
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⭐ 10 звезд", callback_data="topup_10")],
         [InlineKeyboardButton(text="⭐ 50 звезд", callback_data="topup_50")],
@@ -981,8 +988,8 @@ async def back_to_profile(callback: CallbackQuery):
         "<i>Пополните баланс и покупайте товары за звезды внутри бота</i>"
     )
     
+    # Обычные пользователи не могут пополнять баланс - только зарабатывать на продаже товаров
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="topup_balance")],
         [InlineKeyboardButton(text="🎫 Активировать промокод", callback_data="activate_promo")],
         [InlineKeyboardButton(text="📜 Мои заказы", callback_data="my_orders")],
         [InlineKeyboardButton(text="🎯 Реферальная программа", callback_data="referral_program")],
@@ -1101,7 +1108,7 @@ async def user_product_price(message: Message, state: FSMContext):
     # Получаем категории
     categories = db.get_categories()
     keyboard = []
-    for cat in list(categories.keys())[:3]:  # Максимум 3 в ряд
+    for cat in categories[:3]:  # Максимум 3 в ряд
         keyboard.append([InlineKeyboardButton(text=f"📁 {cat}", callback_data=f"user_select_cat_{cat}")])
     keyboard.append([InlineKeyboardButton(text="⏭ Пропустить", callback_data="user_skip_category")])
     keyboard.append([InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")])
@@ -2066,6 +2073,29 @@ async def process_pay_with_balance(callback: CallbackQuery):
                     await callback.message.answer_video(video=material["file_id"], caption=f"📄 Ваш материал ({i+1}/{quantity})")
                 await asyncio.sleep(0.5)  # Небольшая задержка между выдачами
             
+            # Начисляем деньги владельцу товара (98% от цены, 2% комиссия)
+            owner_id = product.get("owner_id")
+            if owner_id and owner_id != user_id:  # Если товар принадлежит пользователю
+                owner_earnings = int(price * 0.98)  # 98% владельцу
+                db.add_balance(owner_id, owner_earnings)
+                
+                # Уведомляем владельца
+                try:
+                    await callback.bot.send_message(
+                        owner_id,
+                        f"💰 <b>Ваш товар куплен!</b>\n\n"
+                        f"Товар: {product['name']}\n"
+                        f"Количество: {quantity} шт.\n"
+                        f"Цена: {price} ⭐\n"
+                        f"💰 Вам начислено: <b>{owner_earnings} ⭐</b> (98%)\n"
+                        f"💳 Ваш баланс: {db.get_balance(owner_id)} ⭐\n\n"
+                        f"Покупатель: @{callback.from_user.username or callback.from_user.id}",
+                        parse_mode=ParseMode.HTML
+                    )
+                except:
+                    pass
+                logger.info(f"Владельцу товара {owner_id} начислено {owner_earnings} ⭐ за покупку товара {product_id}")
+            
             for admin_id in ADMIN_IDS:
                 try:
                     await callback.bot.send_message(
@@ -2534,7 +2564,11 @@ async def process_successful_payment(message: Message):
         
         # Проверяем тип платежа
         if payload.startswith("topup_"):
-            # Пополнение баланса
+            # Пополнение баланса (только для админов)
+            if not is_admin(message.from_user.id):
+                await message.answer("❌ Пополнение баланса недоступно! Зарабатывайте на продаже товаров.")
+                return
+            
             amount = int(payload.replace("topup_", ""))
             user_id = message.from_user.id
             
@@ -2718,6 +2752,29 @@ async def process_successful_payment(message: Message):
                         caption=f"📄 Ваш материал ({i+1}/{quantity})"
                     )
                 await asyncio.sleep(0.5)  # Небольшая задержка между выдачами
+
+            # Начисляем деньги владельцу товара (98% от цены, 2% комиссия)
+            owner_id = product.get("owner_id")
+            if owner_id and owner_id != message.from_user.id:  # Если товар принадлежит пользователю
+                owner_earnings = int(total_price * 0.98)  # 98% владельцу
+                db.add_balance(owner_id, owner_earnings)
+                
+                # Уведомляем владельца
+                try:
+                    await message.bot.send_message(
+                        owner_id,
+                        f"💰 <b>Ваш товар куплен!</b>\n\n"
+                        f"Товар: {product['name']}\n"
+                        f"Количество: {quantity} шт.\n"
+                        f"Цена: {total_price} ⭐\n"
+                        f"💰 Вам начислено: <b>{owner_earnings} ⭐</b> (98%)\n"
+                        f"💳 Ваш баланс: {db.get_balance(owner_id)} ⭐\n\n"
+                        f"Покупатель: @{message.from_user.username or message.from_user.id}",
+                        parse_mode=ParseMode.HTML
+                    )
+                except:
+                    pass
+                logger.info(f"Владельцу товара {owner_id} начислено {owner_earnings} ⭐ за покупку товара {product_id}")
 
             # Уведомляем админов о продаже
             for admin_id in ADMIN_IDS:
@@ -4147,6 +4204,29 @@ async def process_crypto_payment_success(bot: Bot, invoice_id: int, invoice_data
                     elif material["type"] == "video":
                         await bot.send_video(user_id, video=material["file_id"], caption=f"📄 Ваш материал ({i+1}/{quantity})")
                     await asyncio.sleep(0.5)
+                
+                # Начисляем деньги владельцу товара (98% от цены, 2% комиссия)
+                owner_id = product.get("owner_id")
+                if owner_id and owner_id != user_id:  # Если товар принадлежит пользователю
+                    owner_earnings = int(price * 0.98)  # 98% владельцу
+                    db.add_balance(owner_id, owner_earnings)
+                    
+                    # Уведомляем владельца
+                    try:
+                        await bot.send_message(
+                            owner_id,
+                            f"💰 <b>Ваш товар куплен!</b>\n\n"
+                            f"Товар: {product['name']}\n"
+                            f"Количество: {quantity} шт.\n"
+                            f"Цена: {price} ⭐\n"
+                            f"💰 Вам начислено: <b>{owner_earnings} ⭐</b> (98%)\n"
+                            f"💳 Ваш баланс: {db.get_balance(owner_id)} ⭐\n\n"
+                            f"Покупатель: ID {user_id}",
+                            parse_mode=ParseMode.HTML
+                        )
+                    except:
+                        pass
+                    logger.info(f"Владельцу товара {owner_id} начислено {owner_earnings} ⭐ за покупку товара {product_id} через CryptoBot")
                 
                 # Уведомляем админов
                 for admin_id in ADMIN_IDS:
