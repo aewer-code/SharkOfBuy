@@ -506,8 +506,17 @@ def get_main_keyboard(page=0, category="Все"):
             else:
                 stock_text = f" (осталось: {stock})"
         
+        # Показываем продавца товара
+        owner_id = product.get("owner_id")
+        seller_text = ""
+        if owner_id:
+            # Получаем username владельца
+            owner_data = db.data.get("users", {}).get(str(owner_id), {})
+            owner_username = owner_data.get("username", f"ID{owner_id}")
+            seller_text = f" 👤 @{owner_username}"
+        
         keyboard.append([InlineKeyboardButton(
-            text=f"🛍 {product['name']} - {product['price']} ⭐{stock_text}",
+            text=f"🛍 {product['name']} - {product['price']} ⭐{stock_text}{seller_text}",
             callback_data=f"buy_{pid}"
         )])
     
@@ -801,11 +810,12 @@ async def cmd_profile(message: Message):
         f"💰 <b>Баланс:</b> {balance} ⭐\n"
         f"<b>Заказов:</b> {orders_count}\n"
         f"<b>Рефералов:</b> {referrals_count}\n\n"
-        "<i>Пополните баланс и покупайте товары за звезды внутри бота</i>"
+        "<i>Зарабатывайте на продаже товаров! При продаже вы получаете 98% от цены.</i>"
     )
     
+    # Обычные пользователи не могут пополнять баланс - только зарабатывать на продаже товаров
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="topup_balance")],
+        [InlineKeyboardButton(text="💸 Вывести средства", callback_data="withdraw_balance")],
         [InlineKeyboardButton(text="🎫 Активировать промокод", callback_data="activate_promo")],
         [InlineKeyboardButton(text="📜 Мои заказы", callback_data="my_orders")],
         [InlineKeyboardButton(text="🎯 Реферальная программа", callback_data="referral_program")],
@@ -985,11 +995,12 @@ async def back_to_profile(callback: CallbackQuery):
         f"💰 <b>Баланс:</b> {balance} ⭐\n"
         f"<b>Заказов:</b> {orders_count}\n"
         f"<b>Рефералов:</b> {referrals_count}\n\n"
-        "<i>Пополните баланс и покупайте товары за звезды внутри бота</i>"
+        "<i>Зарабатывайте на продаже товаров! При продаже вы получаете 98% от цены.</i>"
     )
     
     # Обычные пользователи не могут пополнять баланс - только зарабатывать на продаже товаров
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💸 Вывести средства", callback_data="withdraw_balance")],
         [InlineKeyboardButton(text="🎫 Активировать промокод", callback_data="activate_promo")],
         [InlineKeyboardButton(text="📜 Мои заказы", callback_data="my_orders")],
         [InlineKeyboardButton(text="🎯 Реферальная программа", callback_data="referral_program")],
@@ -998,6 +1009,49 @@ async def back_to_profile(callback: CallbackQuery):
     
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     await callback.answer()
+
+
+@router.callback_query(F.data == "withdraw_balance")
+async def process_withdraw_balance(callback: CallbackQuery):
+    """Запрос на вывод средств"""
+    user_id = callback.from_user.id
+    balance = db.get_balance(user_id)
+    
+    if balance <= 0:
+        await callback.answer("❌ У вас нет средств для вывода!", show_alert=True)
+        return
+    
+    await callback.message.edit_text(
+        f"💸 <b>Вывод средств</b>\n\n"
+        f"💰 Ваш баланс: {balance} ⭐\n\n"
+        f"Для вывода средств напишите администратору:\n"
+        f"• Ваш ID: <code>{user_id}</code>\n"
+        f"• Сумма вывода: {balance} ⭐\n"
+        f"• Способ получения (Telegram Stars, CryptoBot и т.д.)\n\n"
+        f"Администратор обработает ваш запрос в ближайшее время.\n\n"
+        f"💡 <i>Минимальная сумма вывода: 10 ⭐</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📝 Написать админу", url=f"https://t.me/{BOT_CREATOR.replace('@', '')}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_profile")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+    await callback.answer()
+    
+    # Уведомляем админов о запросе на вывод
+    for admin_id in ADMIN_IDS:
+        try:
+            await callback.bot.send_message(
+                admin_id,
+                f"💸 <b>Запрос на вывод средств</b>\n\n"
+                f"👤 Пользователь: @{callback.from_user.username or 'Без username'}\n"
+                f"🆔 ID: <code>{user_id}</code>\n"
+                f"💰 Сумма: {balance} ⭐\n\n"
+                f"Обработайте запрос через команду /pay {user_id} <сумма>",
+                parse_mode=ParseMode.HTML
+            )
+        except:
+            pass
 
 
 @router.callback_query(F.data == "referral_program")
@@ -1129,18 +1183,17 @@ async def user_select_category(callback: CallbackQuery, state: FSMContext):
     await state.update_data(category=category)
     
     await callback.message.edit_text(
-        "📦 <b>Отправьте материал товара:</b>\n\n"
-        "Вы можете отправить:\n"
-        "• Текст\n"
-        "• Фото\n"
-        "• Видео\n\n"
-        "Этот материал будет выдан покупателю после оплаты.",
+        "📦 <b>Тип выдачи товара:</b>\n\n"
+        "• <b>Автоматическая</b> - товар выдается сразу после оплаты\n"
+        "• <b>Ручная</b> - товар выдается администратором вручную",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🤖 Автоматическая", callback_data="user_delivery_auto")],
+            [InlineKeyboardButton(text="👤 Ручная", callback_data="user_delivery_manual")],
             [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
         ]),
         parse_mode=ParseMode.HTML
     )
-    await state.set_state(UserProductStates.waiting_product_material)
+    await state.set_state(UserProductStates.waiting_product_delivery_type)
     await callback.answer()
 
 
@@ -1148,6 +1201,46 @@ async def user_select_category(callback: CallbackQuery, state: FSMContext):
 async def user_skip_category(callback: CallbackQuery, state: FSMContext):
     """Пропуск категории"""
     await state.update_data(category="Без категории")
+    
+    await callback.message.edit_text(
+        "📦 <b>Тип выдачи товара:</b>\n\n"
+        "• <b>Автоматическая</b> - товар выдается сразу после оплаты\n"
+        "• <b>Ручная</b> - товар выдается администратором вручную",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🤖 Автоматическая", callback_data="user_delivery_auto")],
+            [InlineKeyboardButton(text="👤 Ручная", callback_data="user_delivery_manual")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(UserProductStates.waiting_product_delivery_type)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("user_delivery_"))
+async def user_select_delivery_type(callback: CallbackQuery, state: FSMContext):
+    """Выбор типа выдачи пользователем"""
+    delivery_type = callback.data.replace("user_delivery_", "")
+    await state.update_data(delivery_type=delivery_type)
+    
+    await callback.message.edit_text(
+        "📊 <b>Количество товара:</b>\n\n"
+        "Выберите количество товара на складе:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="∞ Безлимит", callback_data="user_stock_unlimited")],
+            [InlineKeyboardButton(text="🔢 Указать количество", callback_data="user_stock_custom")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(UserProductStates.waiting_product_stock)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "user_stock_unlimited")
+async def user_stock_unlimited(callback: CallbackQuery, state: FSMContext):
+    """Безлимитный товар"""
+    await state.update_data(stock=None)
     
     await callback.message.edit_text(
         "📦 <b>Отправьте материал товара:</b>\n\n"
@@ -1163,6 +1256,49 @@ async def user_skip_category(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(UserProductStates.waiting_product_material)
     await callback.answer()
+
+
+@router.callback_query(F.data == "user_stock_custom")
+async def user_stock_custom(callback: CallbackQuery, state: FSMContext):
+    """Ввод количества товара"""
+    await callback.message.edit_text(
+        "🔢 <b>Введите количество товара:</b>\n\n"
+        "Укажите, сколько единиц товара будет доступно для продажи.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(UserProductStates.waiting_product_stock)
+    await callback.answer()
+
+
+@router.message(UserProductStates.waiting_product_stock)
+async def user_product_stock_input(message: Message, state: FSMContext):
+    """Обработка количества товара от пользователя"""
+    try:
+        stock = int(message.text)
+        if stock < 1:
+            await message.answer("❌ Количество должно быть минимум 1! Введите корректное количество:")
+            return
+    except ValueError:
+        await message.answer("❌ Введите корректное количество (целое число, минимум 1)!")
+        return
+    
+    await state.update_data(stock=stock)
+    
+    await message.answer(
+        "📦 <b>Отправьте материал товара:</b>\n\n"
+        "Вы можете отправить:\n"
+        "• Текст\n"
+        "• Фото\n"
+        "• Видео\n\n"
+        "Этот материал будет выдан покупателю после оплаты.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
+        ])
+    )
+    await state.set_state(UserProductStates.waiting_product_material)
 
 
 @router.message(UserProductStates.waiting_product_material)
@@ -1193,8 +1329,8 @@ async def user_product_material(message: Message, state: FSMContext):
         "price": data["price"],
         "category": data.get("category", "Без категории"),
         "material": material,
-        "delivery_type": "auto",  # Всегда автоматическая выдача для пользователей
-        "stock": None,  # Безлимитный для пользователей
+        "delivery_type": data.get("delivery_type", "auto"),
+        "stock": data.get("stock", None),
         "created_at": datetime.now().isoformat(),
         "status": "pending"
     }
@@ -1280,9 +1416,12 @@ async def admin_approve_product(callback: CallbackQuery):
             try:
                 await callback.bot.send_message(
                     pending["user_id"],
-                    f"✅ <b>Ваш товар одобрен!</b>\n\n"
-                    f"Товар <b>\"{pending['name']}\"</b> был одобрен администратором и добавлен в каталог.\n\n"
-                    f"Теперь его могут покупать другие пользователи!",
+                    f"✅ <b>Ваш товар одобрен и выставлен на продажу!</b>\n\n"
+                    f"📝 Товар: <b>\"{pending['name']}\"</b>\n"
+                    f"💰 Цена: {pending['price']} ⭐\n"
+                    f"📁 Категория: {pending.get('category', 'Без категории')}\n\n"
+                    f"🎉 Товар добавлен в каталог и теперь его могут покупать другие пользователи!\n\n"
+                    f"💡 При каждой продаже вы получите 98% от цены на баланс.",
                     parse_mode=ParseMode.HTML
                 )
             except:
@@ -1935,12 +2074,20 @@ async def process_quantity(callback: CallbackQuery):
         user_balance = db.get_balance(callback.from_user.id)
         total_price = product["price"] * quantity
         
-        # Сохраняем количество в callback data для дальнейшей обработки
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"💰 Баланс ({user_balance} ⭐)", callback_data=f"pay_balance_{product_id}_{quantity}")],
+        # Создаем клавиатуру с вариантами оплаты
+        # Обычные пользователи могут оплачивать балансом только если у них есть заработанные средства
+        keyboard_buttons = []
+        
+        # Показываем кнопку баланса только если у пользователя есть баланс (заработанные средства)
+        if user_balance > 0:
+            keyboard_buttons.append([InlineKeyboardButton(text=f"💰 Баланс ({user_balance} ⭐)", callback_data=f"pay_balance_{product_id}_{quantity}")])
+        
+        keyboard_buttons.extend([
             [InlineKeyboardButton(text="⭐ Telegram Stars", callback_data=f"pay_stars_{product_id}_{quantity}")],
             [InlineKeyboardButton(text="💳 CryptoBot (USDT)", callback_data=f"pay_crypto_{product_id}_{quantity}")]
         ])
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
         
         await callback.message.answer(
             f"🛍 <b>{product['name']}</b>\n\n"
