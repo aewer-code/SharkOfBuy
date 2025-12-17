@@ -828,8 +828,17 @@ async def process_topup_crypto_amount(callback: CallbackQuery):
             parse_mode=ParseMode.HTML
         )
         await callback.answer()
+    except ValueError as e:
+        logger.error(f"Ошибка парсинга суммы: {e}")
+        await callback.answer("❌ Неверная сумма", show_alert=True)
     except Exception as e:
-        logger.error(f"Ошибка создания инвойса для пополнения: {e}")
+        logger.error(f"Ошибка создания инвойса для пополнения: {e}", exc_info=True)
+        await callback.message.answer(
+            f"❌ <b>Ошибка</b>\n\n"
+            f"Детали: {str(e)}\n\n"
+            f"Проверьте логи бота для подробностей.",
+            parse_mode=ParseMode.HTML
+        )
         await callback.answer("❌ Ошибка", show_alert=True)
 
 
@@ -1454,20 +1463,31 @@ async def create_cryptobot_invoice(user_id: int, product_name: str, amount: floa
             "payload": payload
         }
         
+        logger.info(f"Создание CryptoBot инвойса: {data}")
+        
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=data, headers=headers) as response:
+                response_text = await response.text()
+                logger.info(f"CryptoBot API response status: {response.status}, body: {response_text}")
+                
                 if response.status == 200:
-                    result = await response.json()
-                    if result.get("ok"):
-                        return result.get("result")
-                    else:
-                        logger.error(f"CryptoBot API error: {result}")
+                    try:
+                        result = await response.json()
+                        logger.info(f"CryptoBot API JSON response: {result}")
+                        if result.get("ok"):
+                            return result.get("result")
+                        else:
+                            error_msg = result.get("error", {}).get("name", "Unknown error")
+                            logger.error(f"CryptoBot API error: {result}")
+                            return None
+                    except Exception as json_error:
+                        logger.error(f"Ошибка парсинга JSON ответа CryptoBot: {json_error}, response: {response_text}")
                         return None
                 else:
-                    logger.error(f"CryptoBot API HTTP error: {response.status}")
+                    logger.error(f"CryptoBot API HTTP error: {response.status}, response: {response_text}")
                     return None
     except Exception as e:
-        logger.error(f"Ошибка создания CryptoBot инвойса: {e}")
+        logger.error(f"Ошибка создания CryptoBot инвойса: {e}", exc_info=True)
         return None
 
 
@@ -2052,8 +2072,35 @@ async def process_buy_message(message: Message, state: FSMContext):
     """Обработка сообщения после оплаты"""
     # Проверяем, не находится ли пользователь в состоянии админ-панели
     current_state = await state.get_state()
-    if current_state and current_state.startswith("AdminStates"):
-        return  # Не обрабатываем, если пользователь в админ-панели
+    if current_state:
+        # Проверяем, находится ли пользователь в одном из админских состояний
+        admin_states = [
+            AdminStates.waiting_product_name,
+            AdminStates.waiting_product_description,
+            AdminStates.waiting_product_price,
+            AdminStates.waiting_product_category,
+            AdminStates.waiting_product_delivery_type,
+            AdminStates.waiting_product_stock,
+            AdminStates.waiting_product_material,
+            AdminStates.waiting_edit_field,
+            AdminStates.waiting_start_text,
+            AdminStates.waiting_start_media,
+            AdminStates.waiting_manual_delivery,
+            AdminStates.waiting_promo_code,
+            AdminStates.waiting_create_promo_code,
+            AdminStates.waiting_create_promo_amount,
+            AdminStates.waiting_create_promo_uses
+        ]
+        
+        # Проверяем, находится ли пользователь в одном из админских состояний
+        for admin_state in admin_states:
+            if current_state == admin_state:
+                return  # Не обрабатываем, если пользователь в админ-панели
+        
+        # Дополнительная проверка через строковое представление
+        state_str = str(current_state)
+        if "AdminStates" in state_str or "waiting" in state_str.lower():
+            return  # Не обрабатываем, если пользователь в админ-панели
     
     user_id = str(message.from_user.id)
     
