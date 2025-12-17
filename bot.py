@@ -5,7 +5,7 @@ import logging
 import time
 import hmac
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List
 from dotenv import load_dotenv
 import aiohttp
@@ -2067,45 +2067,6 @@ async def skip_message(message: Message):
         await message.answer("✅ Сообщение пропущено.", parse_mode=ParseMode.HTML)
 
 
-@router.message(
-    F.text & 
-    ~F.text.startswith("/") & 
-    ~F.text.in_(["🛍️ Каталог товаров", "👤 Личный кабинет", "📜 Мои заказы", "🎯 Реферальная программа"])
-)
-async def process_buy_message(message: Message, state: FSMContext):
-    """Обработка сообщения после оплаты"""
-    # Проверяем, не находится ли пользователь в состоянии админ-панели
-    current_state = await state.get_state()
-    if current_state:
-        # Список всех админских состояний
-        admin_states = [
-            AdminStates.waiting_product_name,
-            AdminStates.waiting_product_description,
-            AdminStates.waiting_product_price,
-            AdminStates.waiting_product_category,
-            AdminStates.waiting_product_delivery_type,
-            AdminStates.waiting_product_stock,
-            AdminStates.waiting_product_material,
-            AdminStates.waiting_edit_field,
-            AdminStates.waiting_start_text,
-            AdminStates.waiting_start_media,
-            AdminStates.waiting_manual_delivery,
-            AdminStates.waiting_promo_code,
-            AdminStates.waiting_create_promo_code,
-            AdminStates.waiting_create_promo_amount,
-            AdminStates.waiting_create_promo_uses
-        ]
-        
-        # Проверяем, находится ли пользователь в одном из админских состояний
-        for admin_state in admin_states:
-            if current_state == admin_state:
-                return  # Не обрабатываем, если пользователь в админ-панели
-    
-    user_id = str(message.from_user.id)
-    
-    # Проверяем, есть ли ожидающее сообщение
-    if "buy_messages" not in db.data or user_id not in db.data["buy_messages"]:
-        return  # Не обрабатываем, если это не сообщение после оплаты
     
     buy_data = db.data["buy_messages"][user_id]
     product_id = buy_data["product_id"]
@@ -3148,6 +3109,59 @@ async def admin_promo_uses_input(message: Message, state: FSMContext):
     await state.clear()
 
 
+@router.message(
+    F.text & 
+    ~F.text.startswith("/") & 
+    ~F.text.in_(["🛍️ Каталог товаров", "👤 Личный кабинет", "📜 Мои заказы", "🎯 Реферальная программа"])
+)
+async def process_buy_message(message: Message, state: FSMContext):
+    """Обработка сообщения после оплаты"""
+    # Проверяем, не находится ли пользователь в состоянии админ-панели
+    # Админские обработчики имеют приоритет, но на всякий случай проверяем
+    current_state = await state.get_state()
+    if current_state and current_state.startswith("AdminStates"):
+        return  # Не обрабатываем, если пользователь в админ-панели
+    
+    user_id = str(message.from_user.id)
+    
+    # Проверяем, есть ли ожидающее сообщение
+    if "buy_messages" not in db.data or user_id not in db.data["buy_messages"]:
+        return  # Не обрабатываем, если это не сообщение после оплаты
+    
+    buy_data = db.data["buy_messages"][user_id]
+    product_id = buy_data["product_id"]
+    quantity = buy_data["quantity"]
+    price = buy_data["price"]
+    payment_type = buy_data["payment_type"]
+    
+    # Удаляем из ожидающих
+    del db.data["buy_messages"][user_id]
+    db.save()
+    
+    # Сохраняем сообщение в заказе
+    user_message = message.text
+    
+    # Уведомляем админов о сообщении
+    for admin_id in ADMIN_IDS:
+        try:
+            product = db.get_product(product_id)
+            await message.bot.send_message(
+                admin_id,
+                f"💬 <b>Сообщение от покупателя</b>\n\n"
+                f"Товар: {product['name']}\n"
+                f"Количество: {quantity} шт.\n"
+                f"Цена: {price} ⭐\n"
+                f"Покупатель: @{message.from_user.username or message.from_user.id}\n"
+                f"ID: {message.from_user.id}\n\n"
+                f"<b>Сообщение:</b>\n{user_message}",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Ошибка отправки сообщения админу: {e}")
+    
+    await message.answer("✅ Ваше сообщение отправлено администратору!", parse_mode=ParseMode.HTML)
+
+
 @router.callback_query(F.data == "admin_back")
 async def admin_back(callback: CallbackQuery):
     total_users = len(db.get_all_users())
@@ -3170,6 +3184,31 @@ async def check_crypto_payments_periodically(bot: Bot):
             
             if "crypto_invoices" not in db.data:
                 continue
+            
+            # Удаляем инвойсы старше 15 минут
+            current_time = datetime.now()
+            expired_invoices = []
+            
+            for invoice_id_str, invoice_data in db.data["crypto_invoices"].items():
+                if invoice_data.get("status") == "pending":
+                    created_at_str = invoice_data.get("created_at")
+                    if created_at_str:
+                        try:
+                            created_at = datetime.fromisoformat(created_at_str)
+                            time_diff = current_time - created_at
+                            if time_diff > timedelta(minutes=15):
+                                expired_invoices.append(invoice_id_str)
+                        except Exception as e:
+                            logger.error(f"Ошибка парсинга времени создания инвойса {invoice_id_str}: {e}")
+            
+            # Удаляем просроченные инвойсы
+            for invoice_id_str in expired_invoices:
+                invoice_data = db.data["crypto_invoices"].pop(invoice_id_str, None)
+                if invoice_data:
+                    logger.info(f"Удален просроченный инвойс {invoice_id_str} (старше 15 минут)")
+            
+            if expired_invoices:
+                db.save()
             
             pending_invoices = {
                 inv_id: inv_data 
