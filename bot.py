@@ -944,7 +944,13 @@ async def process_inline_query(inline_query: InlineQuery):
     """Обработка inline запросов для отправки рекламы"""
     try:
         user_id = inline_query.from_user.id
-        bot_username = (await inline_query.bot.get_me()).username
+        query = inline_query.query.strip()
+        
+        logger.info(f"Inline query от пользователя {user_id}, query: '{query}'")
+        
+        # Получаем username бота
+        bot_me = await inline_query.bot.get_me()
+        bot_username = bot_me.username
         
         # Создаем реферальную ссылку для пользователя
         referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
@@ -962,10 +968,11 @@ async def process_inline_query(inline_query: InlineQuery):
         ])
         
         # Создаем результат inline запроса
+        # Используем уникальный ID на основе user_id для кэширования
         result = InlineQueryResultArticle(
-            id="1",
+            id=f"ad_{user_id}_{int(time.time())}",  # Уникальный ID
             title="📢 Отправить рекламу",
-            description="Отправить рекламное сообщение с бонусом",
+            description="Отправить рекламное сообщение с бонусом 10 ⭐",
             input_message_content=InputTextMessageContent(
                 message_text=ad_text,
                 parse_mode=ParseMode.HTML
@@ -973,11 +980,16 @@ async def process_inline_query(inline_query: InlineQuery):
             reply_markup=keyboard
         )
         
-        await inline_query.answer([result], cache_time=1)
+        # Отвечаем на запрос, показывая результат даже при пустом query
+        await inline_query.answer([result], cache_time=0, is_personal=False)
+        logger.info(f"Inline query обработан для пользователя {user_id}")
         
     except Exception as e:
-        logger.error(f"Ошибка обработки inline запроса: {e}")
-        await inline_query.answer([], cache_time=1)
+        logger.error(f"Ошибка обработки inline запроса: {e}", exc_info=True)
+        try:
+            await inline_query.answer([], cache_time=1)
+        except:
+            pass
 
 
 @router.callback_query(F.data == "activate_promo")
@@ -3709,7 +3721,7 @@ async def main():
         
         logger.info("🤖 Бот запущен!")
         logger.info(f"Админы: {ADMIN_IDS}")
-        await dp.start_polling(bot, allowed_updates=["message", "callback_query", "pre_checkout_query", "successful_payment"])
+        await dp.start_polling(bot, allowed_updates=["message", "callback_query", "pre_checkout_query", "successful_payment", "inline_query"])
     except Exception as e:
         logger.error(f"Критическая ошибка при запуске: {e}", exc_info=True)
         raise
