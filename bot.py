@@ -3,9 +3,12 @@ import json
 import os
 import logging
 import time
+import hmac
+import hashlib
 from datetime import datetime
 from typing import Optional, List
 from dotenv import load_dotenv
+import aiohttp
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -30,6 +33,10 @@ if not BOT_TOKEN:
 
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(",") if admin_id.strip()]
+
+# CryptoBot API
+CRYPTOBOT_API_TOKEN = os.getenv("CRYPTOBOT_API_TOKEN", "502801:AA8q8d59ImInEBXTwj65KXNfdiOUPMhZTqp")
+CRYPTOBOT_API_URL = "https://pay.crypt.bot/api/"
 
 # Обязательная подписка
 REQUIRED_CHANNEL = "@SharkOfDark"
@@ -1081,7 +1088,8 @@ async def process_quantity(callback: CallbackQuery):
         # Сохраняем количество в callback data для дальнейшей обработки
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=f"💰 Баланс ({user_balance} ⭐)", callback_data=f"pay_balance_{product_id}_{quantity}")],
-            [InlineKeyboardButton(text="⭐ Telegram Stars", callback_data=f"pay_stars_{product_id}_{quantity}")]
+            [InlineKeyboardButton(text="⭐ Telegram Stars", callback_data=f"pay_stars_{product_id}_{quantity}")],
+            [InlineKeyboardButton(text="💳 CryptoBot (USDT)", callback_data=f"pay_crypto_{product_id}_{quantity}")]
         ])
         
         await callback.message.answer(
@@ -1166,7 +1174,7 @@ async def process_pay_with_balance(callback: CallbackQuery):
                 product_id,
                 product["name"],
                 price,
-                quantity=quantity
+                quantity
             )
             
             await callback.message.answer(
@@ -1273,6 +1281,214 @@ async def process_pay_with_stars(callback: CallbackQuery):
         await callback.answer("❌ Ошибка", show_alert=True)
 
 
+# ============= CRYPTOBOT ОПЛАТА =============
+async def create_cryptobot_invoice(user_id: int, product_name: str, amount: float, payload: str) -> Optional[dict]:
+    """Создать инвойс через CryptoBot API"""
+    try:
+        url = f"{CRYPTOBOT_API_URL}createInvoice"
+        headers = {
+            "Crypto-Pay-API-Token": CRYPTOBOT_API_TOKEN,
+            "Content-Type": "application/json"
+        }
+        data = {
+            "asset": "USDT",
+            "amount": str(amount),
+            "description": product_name,
+            "hidden_message": payload,
+            "paid_btn_name": "viewItem",
+            "paid_btn_url": f"https://t.me/{BOT_CREATOR.replace('@', '')}",
+            "payload": payload
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=data, headers=headers) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    if result.get("ok"):
+                        return result.get("result")
+                    else:
+                        logger.error(f"CryptoBot API error: {result}")
+                        return None
+                else:
+                    logger.error(f"CryptoBot API HTTP error: {response.status}")
+                    return None
+    except Exception as e:
+        logger.error(f"Ошибка создания CryptoBot инвойса: {e}")
+        return None
+
+
+def verify_cryptobot_signature(data: dict, signature: str) -> bool:
+    """Проверка подписи запроса от CryptoBot"""
+    try:
+        # Создаем строку для проверки подписи
+        data_str = json.dumps(data, separators=(',', ':'), sort_keys=True)
+        secret_key = CRYPTOBOT_API_TOKEN.split(':')[1] if ':' in CRYPTOBOT_API_TOKEN else CRYPTOBOT_API_TOKEN
+        
+        # Вычисляем HMAC SHA256
+        expected_signature = hmac.new(
+            secret_key.encode(),
+            data_str.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        
+        return hmac.compare_digest(expected_signature, signature)
+    except Exception as e:
+        logger.error(f"Ошибка проверки подписи CryptoBot: {e}")
+        return False
+
+
+@router.callback_query(F.data.startswith("pay_crypto_"))
+async def process_pay_with_crypto(callback: CallbackQuery):
+    """Оплата товара через CryptoBot"""
+    try:
+        parts = callback.data.replace("pay_crypto_", "").split("_")
+        product_id = parts[0]
+        quantity = int(parts[1]) if len(parts) > 1 else 1
+        
+        product = db.get_product(product_id)
+        
+        if not product:
+            await callback.answer("❌ Товар не найден!", show_alert=True)
+            return
+        
+        # Проверка остатка
+        stock = product.get("stock")
+        if stock is not None and stock < quantity:
+            await callback.answer(f"❌ Недостаточно товара! В наличии: {stock} шт.", show_alert=True)
+            return
+        
+        total_price = product["price"] * quantity
+        
+        # Конвертируем звезды в USDT (примерно 1 звезда = 0.01 USDT, можно настроить)
+        usdt_amount = total_price * 0.01
+        
+        await callback.answer()
+        
+        # Создаем инвойс через CryptoBot
+        payload = f"product_{product_id}_{quantity}"
+        invoice = await create_cryptobot_invoice(
+            callback.from_user.id,
+            f"{product['name']} x{quantity}",
+            usdt_amount,
+            payload
+        )
+        
+        if not invoice:
+            await callback.message.answer(
+                "❌ <b>Ошибка создания платежа</b>\n\n"
+                "Не удалось создать инвойс через CryptoBot. Попробуйте другой способ оплаты.",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        
+        invoice_url = invoice.get("pay_url")
+        invoice_id = invoice.get("invoice_id")
+        
+        if not invoice_id:
+            await callback.message.answer(
+                "❌ <b>Ошибка создания платежа</b>\n\n"
+                "Не удалось получить ID инвойса от CryptoBot.",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        
+        # Сохраняем invoice_id для проверки
+        if "crypto_invoices" not in db.data:
+            db.data["crypto_invoices"] = {}
+        db.data["crypto_invoices"][str(invoice_id)] = {
+            "user_id": callback.from_user.id,
+            "product_id": product_id,
+            "quantity": quantity,
+            "price": total_price,
+            "status": "pending",
+            "created_at": datetime.now().isoformat()
+        }
+        db.save()
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить через CryptoBot", url=invoice_url)]
+        ])
+        
+        await callback.message.answer(
+            f"💳 <b>Оплата через CryptoBot</b>\n\n"
+            f"Товар: {product['name']}\n"
+            f"Количество: {quantity} шт.\n"
+            f"Сумма: {usdt_amount:.2f} USDT\n\n"
+            f"Нажмите кнопку ниже для оплаты:",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка оплаты через CryptoBot: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
+@router.message(Command("cryptobot_webhook"))
+async def cryptobot_webhook_handler(message: Message):
+    """Обработчик webhook от CryptoBot (для ручной проверки)"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    # Это команда для тестирования, реальный webhook будет через HTTP
+    await message.answer("Webhook обрабатывается автоматически при оплате через CryptoBot")
+
+
+@router.message(Command("check_crypto_payment"))
+async def check_crypto_payment(message: Message, state: FSMContext):
+    """Проверка статуса платежа CryptoBot (для админов)"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    try:
+        # Получаем список ожидающих платежей
+        if "crypto_invoices" not in db.data:
+            await message.answer("Нет ожидающих платежей через CryptoBot.")
+            return
+        
+        pending = [inv for inv in db.data["crypto_invoices"].values() if inv["status"] == "pending"]
+        
+        if not pending:
+            await message.answer("Нет ожидающих платежей через CryptoBot.")
+            return
+        
+        text = f"⏳ <b>Ожидающие платежи CryptoBot:</b> {len(pending)}\n\n"
+        for inv in pending[:10]:  # Показываем первые 10
+            text += f"ID: {inv.get('invoice_id', 'N/A')}\n"
+            text += f"Пользователь: {inv['user_id']}\n"
+            text += f"Товар: {inv['product_id']}\n"
+            text += f"Сумма: {inv['price']} ⭐\n\n"
+        
+        await message.answer(text, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"Ошибка проверки платежей: {e}")
+
+
+# Функция для проверки статуса инвойса через CryptoBot API
+async def check_cryptobot_invoice_status(invoice_id: int) -> Optional[dict]:
+    """Проверить статус инвойса через CryptoBot API"""
+    try:
+        url = f"{CRYPTOBOT_API_URL}getInvoices"
+        headers = {
+            "Crypto-Pay-API-Token": CRYPTOBOT_API_TOKEN
+        }
+        params = {
+            "invoice_ids": str(invoice_id)
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, headers=headers) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    if result.get("ok") and result.get("result", {}).get("items"):
+                        return result["result"]["items"][0]
+                    return None
+                return None
+    except Exception as e:
+        logger.error(f"Ошибка проверки статуса инвойса: {e}")
+        return None
+
+
 @router.callback_query(F.data.startswith("get_free_"))
 async def process_get_free(callback: CallbackQuery):
     """Бесплатная выдача товара за 0 звезд"""
@@ -1304,7 +1520,8 @@ async def process_get_free(callback: CallbackQuery):
                 callback.from_user.username or "Без username",
                 product_id,
                 product["name"],
-                0
+                0,
+                quantity=1
             )
             
             await callback.message.answer(
@@ -1653,7 +1870,7 @@ async def process_successful_payment(message: Message):
                 product["name"],
                 total_price,
                 status="completed",
-                quantity
+                quantity=quantity
             )
 
         # Уменьшаем остаток товара на quantity
@@ -2740,6 +2957,161 @@ async def admin_back(callback: CallbackQuery):
 
 
 # ============= ЗАПУСК БОТА =============
+async def check_crypto_payments_periodically(bot: Bot):
+    """Периодическая проверка статуса платежей CryptoBot"""
+    while True:
+        try:
+            await asyncio.sleep(30)  # Проверяем каждые 30 секунд
+            
+            if "crypto_invoices" not in db.data:
+                continue
+            
+            pending_invoices = {
+                inv_id: inv_data 
+                for inv_id, inv_data in db.data["crypto_invoices"].items() 
+                if inv_data.get("status") == "pending"
+            }
+            
+            for invoice_id_str, invoice_data in pending_invoices.items():
+                try:
+                    invoice_id = int(invoice_id_str)
+                    invoice_status = await check_cryptobot_invoice_status(invoice_id)
+                    
+                    if invoice_status and invoice_status.get("status") == "paid":
+                        # Платеж успешен - обрабатываем
+                        await process_crypto_payment_success(bot, invoice_id, invoice_data)
+                except Exception as e:
+                    logger.error(f"Ошибка проверки инвойса {invoice_id_str}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Ошибка в периодической проверке платежей: {e}")
+            await asyncio.sleep(60)
+
+
+async def process_crypto_payment_success(bot: Bot, invoice_id: int, invoice_data: dict):
+    """Обработка успешного платежа через CryptoBot"""
+    try:
+        user_id = invoice_data["user_id"]
+        product_id = invoice_data["product_id"]
+        quantity = invoice_data["quantity"]
+        price = invoice_data["price"]
+        
+        # Обновляем статус инвойса
+        db.data["crypto_invoices"][str(invoice_id)]["status"] = "paid"
+        db.save()
+        
+        product = db.get_product(product_id)
+        if not product:
+            logger.error(f"Товар {product_id} не найден при обработке CryptoBot платежа")
+            return
+        
+        # Выдаем товар
+        delivery_type = product.get("delivery_type", "auto")
+        
+        try:
+            await bot.send_message(
+                user_id,
+                f"✅ <b>Оплата через CryptoBot успешна!</b>\n\n"
+                f"Товар: {product['name']}\n"
+                f"Количество: {quantity} шт.\n"
+                f"Цена: {price} ⭐\n\n"
+                "💬 Хотите оставить сообщение к заказу? (Напишите сообщение или отправьте /skip)",
+                parse_mode=ParseMode.HTML
+            )
+            
+            # Сохраняем данные для запроса сообщения
+            if "buy_messages" not in db.data:
+                db.data["buy_messages"] = {}
+            db.data["buy_messages"][str(user_id)] = {
+                "product_id": product_id,
+                "quantity": quantity,
+                "price": price,
+                "payment_type": "crypto"
+            }
+            db.save()
+            
+            if delivery_type == "manual":
+                # Ручная выдача
+                pending = db.add_pending_order(
+                    user_id,
+                    "CryptoBot пользователь",
+                    product_id,
+                    product["name"],
+                    price,
+                    quantity
+                )
+                
+                await bot.send_message(
+                    user_id,
+                    "⏳ <b>Ваш заказ принят!</b>\n\n"
+                    "Товар будет выдан вручную администратором.",
+                    parse_mode=ParseMode.HTML
+                )
+                
+                # Уведомляем админов
+                for admin_id in ADMIN_IDS:
+                    try:
+                        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text="✅ Выдать товар", callback_data=f"deliver_{pending['order_id']}")]
+                        ])
+                        await bot.send_message(
+                            admin_id,
+                            f"🔔 <b>Новый заказ (CryptoBot)!</b>\n\n"
+                            f"Товар: {product['name']}\n"
+                            f"Количество: {quantity} шт.\n"
+                            f"Цена: {price} ⭐\n"
+                            f"Покупатель: ID {user_id}",
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=keyboard
+                        )
+                    except:
+                        pass
+                
+                db.add_order(user_id, "CryptoBot пользователь", product_id, product["name"], price, status="pending", quantity=quantity)
+            else:
+                # Автоматическая выдача - выдаем quantity раз
+                material = product["material"]
+                for i in range(quantity):
+                    if material["type"] == "text":
+                        await bot.send_message(user_id, f"📄 <b>Ваш материал ({i+1}/{quantity}):</b>\n\n{material['content']}", parse_mode=ParseMode.HTML)
+                    elif material["type"] == "file":
+                        await bot.send_document(user_id, document=material["file_id"], caption=f"📄 Ваш материал ({i+1}/{quantity})")
+                    elif material["type"] == "photo":
+                        await bot.send_photo(user_id, photo=material["file_id"], caption=f"📄 Ваш материал ({i+1}/{quantity})")
+                    elif material["type"] == "video":
+                        await bot.send_video(user_id, video=material["file_id"], caption=f"📄 Ваш материал ({i+1}/{quantity})")
+                    await asyncio.sleep(0.5)
+                
+                # Уведомляем админов
+                for admin_id in ADMIN_IDS:
+                    try:
+                        await bot.send_message(
+                            admin_id,
+                            f"💰 <b>Новая продажа (CryptoBot)!</b>\n\n"
+                            f"Товар: {product['name']}\n"
+                            f"Количество: {quantity} шт.\n"
+                            f"Цена: {price} ⭐\n"
+                            f"Покупатель: ID {user_id}",
+                            parse_mode=ParseMode.HTML
+                        )
+                    except:
+                        pass
+                
+                db.add_order(user_id, "CryptoBot пользователь", product_id, product["name"], price, status="completed", quantity=quantity)
+            
+            # Уменьшаем остаток
+            for _ in range(quantity):
+                db.decrease_stock(product_id)
+            
+            logger.info(f"CryptoBot платеж обработан: invoice_id={invoice_id}, user_id={user_id}, product_id={product_id}")
+            
+        except Exception as e:
+            logger.error(f"Ошибка отправки сообщения пользователю {user_id}: {e}")
+            
+    except Exception as e:
+        logger.error(f"Ошибка обработки CryptoBot платежа: {e}")
+
+
 async def main():
     try:
         bot = Bot(
@@ -2761,6 +3133,9 @@ async def main():
             BotCommand(command="help", description="Справка по командам"),
         ]
         await bot.set_my_commands(commands)
+        
+        # Запускаем периодическую проверку CryptoBot платежей
+        asyncio.create_task(check_crypto_payments_periodically(bot))
         
         logger.info("🤖 Бот запущен!")
         logger.info(f"Админы: {ADMIN_IDS}")
