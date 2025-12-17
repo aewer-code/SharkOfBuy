@@ -959,7 +959,7 @@ async def process_inline_query(inline_query: InlineQuery):
         ad_text = (
             "Привет! 👋\n\n"
             "Смотри какой бот для покупки товаров: @SharkBuy_rebot\n\n"
-            "Переходи и забирай приветственный бонус в виде 10 ⭐"
+            "Переходи и забирай приветственный бонус!"
         )
         
         # Создаем кнопку с реферальной ссылкой
@@ -972,7 +972,7 @@ async def process_inline_query(inline_query: InlineQuery):
         result = InlineQueryResultArticle(
             id=f"ad_{user_id}_{int(time.time())}",  # Уникальный ID
             title="📢 Отправить рекламу",
-            description="Отправить рекламное сообщение с бонусом 10 ⭐",
+            description="Отправить рекламное сообщение с бонусом",
             input_message_content=InputTextMessageContent(
                 message_text=ad_text,
                 parse_mode=ParseMode.HTML
