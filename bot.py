@@ -716,9 +716,9 @@ async def process_topup_balance(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("topup_"))
+@router.callback_query(F.data.startswith("topup_") & ~F.data.startswith("topup_crypto"))
 async def process_topup_amount(callback: CallbackQuery):
-    """Обработка пополнения баланса"""
+    """Обработка пополнения баланса через Telegram Stars"""
     try:
         if callback.data == "topup_balance":
             return
@@ -2067,41 +2067,28 @@ async def skip_message(message: Message):
         await message.answer("✅ Сообщение пропущено.", parse_mode=ParseMode.HTML)
 
 
-@router.message(F.text & ~F.text.startswith("/") & ~F.text.in_(["🛍️ Каталог товаров", "👤 Личный кабинет", "📜 Мои заказы", "🎯 Реферальная программа"]))
+@router.message(
+    F.text & 
+    ~F.text.startswith("/") & 
+    ~F.text.in_(["🛍️ Каталог товаров", "👤 Личный кабинет", "📜 Мои заказы", "🎯 Реферальная программа"]) &
+    ~StateFilter(AdminStates.waiting_product_name) &
+    ~StateFilter(AdminStates.waiting_product_description) &
+    ~StateFilter(AdminStates.waiting_product_price) &
+    ~StateFilter(AdminStates.waiting_product_category) &
+    ~StateFilter(AdminStates.waiting_product_delivery_type) &
+    ~StateFilter(AdminStates.waiting_product_stock) &
+    ~StateFilter(AdminStates.waiting_product_material) &
+    ~StateFilter(AdminStates.waiting_edit_field) &
+    ~StateFilter(AdminStates.waiting_start_text) &
+    ~StateFilter(AdminStates.waiting_start_media) &
+    ~StateFilter(AdminStates.waiting_manual_delivery) &
+    ~StateFilter(AdminStates.waiting_promo_code) &
+    ~StateFilter(AdminStates.waiting_create_promo_code) &
+    ~StateFilter(AdminStates.waiting_create_promo_amount) &
+    ~StateFilter(AdminStates.waiting_create_promo_uses)
+)
 async def process_buy_message(message: Message, state: FSMContext):
     """Обработка сообщения после оплаты"""
-    # Проверяем, не находится ли пользователь в состоянии админ-панели
-    current_state = await state.get_state()
-    if current_state:
-        # Проверяем, находится ли пользователь в одном из админских состояний
-        admin_states = [
-            AdminStates.waiting_product_name,
-            AdminStates.waiting_product_description,
-            AdminStates.waiting_product_price,
-            AdminStates.waiting_product_category,
-            AdminStates.waiting_product_delivery_type,
-            AdminStates.waiting_product_stock,
-            AdminStates.waiting_product_material,
-            AdminStates.waiting_edit_field,
-            AdminStates.waiting_start_text,
-            AdminStates.waiting_start_media,
-            AdminStates.waiting_manual_delivery,
-            AdminStates.waiting_promo_code,
-            AdminStates.waiting_create_promo_code,
-            AdminStates.waiting_create_promo_amount,
-            AdminStates.waiting_create_promo_uses
-        ]
-        
-        # Проверяем, находится ли пользователь в одном из админских состояний
-        for admin_state in admin_states:
-            if current_state == admin_state:
-                return  # Не обрабатываем, если пользователь в админ-панели
-        
-        # Дополнительная проверка через строковое представление
-        state_str = str(current_state)
-        if "AdminStates" in state_str or "waiting" in state_str.lower():
-            return  # Не обрабатываем, если пользователь в админ-панели
-    
     user_id = str(message.from_user.id)
     
     # Проверяем, есть ли ожидающее сообщение
