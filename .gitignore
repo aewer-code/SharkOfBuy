@@ -1,39 +1,44 @@
-# Конфиденциальные данные
+# Environment
 .env
-*.env
-
-# База данных
-database.json
-database.json.backup*
-
-# Логи
-*.log
-bot.log
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
 venv/
 env/
 ENV/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Database
+database.json
+*.db
+*.sqlite
+
+# Logs
+*.log
+logs/
+bot.log
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Другие проекты (не относятся к боту)
-.cursor/
-CreativeHub/
-codehub/
-BySell/
-EasyCode/
+# Python
+*.egg-info/
+dist/
+build/
 
+# Node (если будет использоваться)
+node_modules/
+package-lock.json
+
+# Other
+*.bak
+*.tmp
+.cache/
