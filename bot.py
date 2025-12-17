@@ -702,12 +702,13 @@ async def process_topup_balance(callback: CallbackQuery):
         [InlineKeyboardButton(text="⭐ 100 звезд", callback_data="topup_100")],
         [InlineKeyboardButton(text="⭐ 250 звезд", callback_data="topup_250")],
         [InlineKeyboardButton(text="⭐ 500 звезд", callback_data="topup_500")],
+        [InlineKeyboardButton(text="💳 CryptoBot (USDT)", callback_data="topup_crypto")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_profile")]
     ])
     
     await callback.message.edit_text(
         "💰 <b>Пополнение баланса</b>\n\n"
-        "Выберите сумму пополнения:\n\n"
+        "Выберите способ пополнения:\n\n"
         "💡 <i>Звезды будут конвертированы в баланс 1:1</i>",
         reply_markup=keyboard,
         parse_mode=ParseMode.HTML
@@ -737,6 +738,98 @@ async def process_topup_amount(callback: CallbackQuery):
         await callback.answer()
     except Exception as e:
         logger.error(f"Ошибка пополнения: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data == "topup_crypto")
+async def process_topup_crypto(callback: CallbackQuery):
+    """Пополнение баланса через CryptoBot"""
+    try:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⭐ 10 звезд", callback_data="topup_crypto_10")],
+            [InlineKeyboardButton(text="⭐ 50 звезд", callback_data="topup_crypto_50")],
+            [InlineKeyboardButton(text="⭐ 100 звезд", callback_data="topup_crypto_100")],
+            [InlineKeyboardButton(text="⭐ 250 звезд", callback_data="topup_crypto_250")],
+            [InlineKeyboardButton(text="⭐ 500 звезд", callback_data="topup_crypto_500")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="topup_balance")]
+        ])
+        
+        await callback.message.edit_text(
+            "💳 <b>Пополнение баланса через CryptoBot</b>\n\n"
+            "Выберите сумму пополнения:\n\n"
+            "💡 <i>1 звезда = 0.01 USDT</i>",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"Ошибка пополнения через CryptoBot: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("topup_crypto_"))
+async def process_topup_crypto_amount(callback: CallbackQuery):
+    """Создание инвойса CryptoBot для пополнения баланса"""
+    try:
+        amount = int(callback.data.replace("topup_crypto_", ""))
+        usdt_amount = amount * 0.01
+        
+        payload = f"topup_{amount}"
+        invoice = await create_cryptobot_invoice(
+            callback.from_user.id,
+            f"Пополнение баланса на {amount} ⭐",
+            usdt_amount,
+            payload
+        )
+        
+        if not invoice:
+            await callback.message.answer(
+                "❌ <b>Ошибка создания платежа</b>\n\n"
+                "Не удалось создать инвойс через CryptoBot.",
+                parse_mode=ParseMode.HTML
+            )
+            await callback.answer()
+            return
+        
+        invoice_url = invoice.get("pay_url")
+        invoice_id = invoice.get("invoice_id")
+        
+        if not invoice_id:
+            await callback.message.answer(
+                "❌ <b>Ошибка создания платежа</b>\n\n"
+                "Не удалось получить ID инвойса от CryptoBot.",
+                parse_mode=ParseMode.HTML
+            )
+            await callback.answer()
+            return
+        
+        # Сохраняем invoice_id для проверки
+        if "crypto_invoices" not in db.data:
+            db.data["crypto_invoices"] = {}
+        db.data["crypto_invoices"][str(invoice_id)] = {
+            "user_id": callback.from_user.id,
+            "type": "topup",
+            "amount": amount,
+            "status": "pending",
+            "created_at": datetime.now().isoformat()
+        }
+        db.save()
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить через CryptoBot", url=invoice_url)]
+        ])
+        
+        await callback.message.answer(
+            f"💳 <b>Пополнение баланса через CryptoBot</b>\n\n"
+            f"Сумма: {amount} ⭐\n"
+            f"К оплате: {usdt_amount:.2f} USDT\n\n"
+            f"Нажмите кнопку ниже для оплаты:",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"Ошибка создания инвойса для пополнения: {e}")
         await callback.answer("❌ Ошибка", show_alert=True)
 
 
@@ -883,6 +976,67 @@ async def cmd_referral(message: Message):
     )
     
     await message.answer(text, parse_mode=ParseMode.HTML)
+
+
+@router.message(Command("pay"))
+async def cmd_pay(message: Message):
+    """Выдача баланса пользователю (только для админов)"""
+    if not is_admin(message.from_user.id):
+        return  # Не отвечаем не-админам
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 3:
+            await message.answer(
+                "❌ <b>Неверный формат команды</b>\n\n"
+                "Использование: <code>/pay &lt;user_id&gt; &lt;сумма&gt;</code>\n\n"
+                "Пример: <code>/pay 123456789 100</code>",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        
+        user_id = int(parts[1])
+        amount = int(parts[2])
+        
+        if amount <= 0:
+            await message.answer("❌ Сумма должна быть больше 0!")
+            return
+        
+        new_balance = db.add_balance(user_id, amount)
+        
+        await message.answer(
+            f"✅ <b>Баланс выдан!</b>\n\n"
+            f"👤 Пользователь: <code>{user_id}</code>\n"
+            f"💰 Выдано: {amount} ⭐\n"
+            f"💳 Новый баланс: {new_balance} ⭐",
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Уведомляем пользователя
+        try:
+            await message.bot.send_message(
+                user_id,
+                f"💰 <b>Вам начислен баланс!</b>\n\n"
+                f"💰 Зачислено: {amount} ⭐\n"
+                f"💳 Ваш баланс: {new_balance} ⭐",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.warning(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
+            await message.answer(f"⚠️ Баланс выдан, но не удалось уведомить пользователя (возможно, он не начинал диалог с ботом)")
+        
+        logger.info(f"Админ {message.from_user.id} выдал {amount} ⭐ пользователю {user_id}")
+        
+    except ValueError:
+        await message.answer(
+            "❌ <b>Ошибка!</b>\n\n"
+            "ID пользователя и сумма должны быть числами.\n\n"
+            "Использование: <code>/pay &lt;user_id&gt; &lt;сумма&gt;</code>",
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.error(f"Ошибка в команде /pay: {e}")
+        await message.answer(f"❌ Ошибка: {str(e)}")
 
 
 @router.message(Command("admin"))
@@ -1894,8 +2048,13 @@ async def skip_message(message: Message):
 
 
 @router.message(F.text & ~F.text.startswith("/") & ~F.text.in_(["🛍️ Каталог товаров", "👤 Личный кабинет", "📜 Мои заказы", "🎯 Реферальная программа"]))
-async def process_buy_message(message: Message):
+async def process_buy_message(message: Message, state: FSMContext):
     """Обработка сообщения после оплаты"""
+    # Проверяем, не находится ли пользователь в состоянии админ-панели
+    current_state = await state.get_state()
+    if current_state and current_state.startswith("AdminStates"):
+        return  # Не обрабатываем, если пользователь в админ-панели
+    
     user_id = str(message.from_user.id)
     
     # Проверяем, есть ли ожидающее сообщение
@@ -2992,13 +3151,72 @@ async def process_crypto_payment_success(bot: Bot, invoice_id: int, invoice_data
     """Обработка успешного платежа через CryptoBot"""
     try:
         user_id = invoice_data["user_id"]
-        product_id = invoice_data["product_id"]
-        quantity = invoice_data["quantity"]
-        price = invoice_data["price"]
+        payment_type = invoice_data.get("type", "product")
         
         # Обновляем статус инвойса
         db.data["crypto_invoices"][str(invoice_id)]["status"] = "paid"
         db.save()
+        
+        # Обработка пополнения баланса
+        if payment_type == "topup":
+            amount = invoice_data["amount"]
+            new_balance = db.add_balance(user_id, amount)
+            
+            try:
+                await bot.send_message(
+                    user_id,
+                    f"✅ <b>Баланс пополнен через CryptoBot!</b>\n\n"
+                    f"💰 Зачислено: {amount} ⭐\n"
+                    f"💳 Новый баланс: {new_balance} ⭐",
+                    parse_mode=ParseMode.HTML
+                )
+                
+                # Начисляем бонус рефереру (10% от пополнения)
+                referrer_bonus = 0
+                referrer_id = None
+                for ref_id, referrals in db.data.get("referrals", {}).items():
+                    if user_id in referrals:
+                        referrer_id = int(ref_id)
+                        referrer_bonus = int(amount * 0.1)
+                        db.add_balance(referrer_id, referrer_bonus)
+                        
+                        try:
+                            await bot.send_message(
+                                referrer_id,
+                                f"🎉 <b>Реферальный бонус!</b>\n\n"
+                                f"Ваш реферал пополнил баланс на {amount} ⭐ через CryptoBot\n\n"
+                                f"💰 Вам начислено: <b>{referrer_bonus} ⭐</b>\n"
+                                f"💳 Ваш баланс: {db.get_balance(referrer_id)} ⭐",
+                                parse_mode=ParseMode.HTML
+                            )
+                        except:
+                            pass
+                        break
+                
+                # Уведомляем админов
+                for admin_id in ADMIN_IDS:
+                    try:
+                        await bot.send_message(
+                            admin_id,
+                            f"💰 <b>Пополнение баланса через CryptoBot!</b>\n\n"
+                            f"Пользователь: ID {user_id}\n"
+                            f"Сумма: {amount} ⭐\n"
+                            f"Бонус реферу: {referrer_bonus} ⭐",
+                            parse_mode=ParseMode.HTML
+                        )
+                    except:
+                        pass
+                
+                logger.info(f"Пользователь {user_id} пополнил баланс на {amount} звезд через CryptoBot")
+                return
+            except Exception as e:
+                logger.error(f"Ошибка отправки сообщения пользователю {user_id}: {e}")
+                return
+        
+        # Обработка покупки товара
+        product_id = invoice_data["product_id"]
+        quantity = invoice_data["quantity"]
+        price = invoice_data["price"]
         
         product = db.get_product(product_id)
         if not product:
