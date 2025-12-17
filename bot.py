@@ -74,9 +74,6 @@ class Database:
                     # Миграция: добавляем очередь ожидания
                     if "pending_orders" not in data:
                         data["pending_orders"] = []
-                    # Миграция: добавляем товары на модерации
-                    if "pending_products" not in data:
-                        data["pending_products"] = []
                     # Миграция: добавляем категорию к товарам если её нет
                     for product_id, product in data.get("products", {}).items():
                         if "category" not in product:
@@ -111,8 +108,7 @@ class Database:
             "referrals": {},  # Реферальная система: {user_id: [список рефералов]}
             "promo_codes": {},  # Промокоды: {code: {"discount": 10, "uses": 0, "max_uses": 100}}
             "users": {},  # Пользователи: {user_id: {"balance": 0, "username": "..."}}
-            "all_users": [],  # Список всех user_id для рассылки
-            "pending_products": []  # Товары на модерации: [{"product_id": "...", "user_id": ..., ...}]
+            "all_users": []  # Список всех user_id для рассылки
         }
 
     def save(self):
@@ -131,7 +127,7 @@ class Database:
             raise
 
     def add_product(self, product_id, name, description, price, material, category="Без категории", 
-                    delivery_type="auto", stock=None, owner_id=None):
+                    delivery_type="auto", stock=None):
         self.data["products"][product_id] = {
             "name": name,
             "description": description,
@@ -140,7 +136,6 @@ class Database:
             "category": category,
             "delivery_type": delivery_type,  # "auto" или "manual"
             "stock": stock,  # None = безлимит, число = остаток
-            "owner_id": owner_id,  # ID владельца товара (None = админ)
             "created_at": datetime.now().isoformat()
         }
         self.save()
@@ -255,45 +250,6 @@ class Database:
     def get_stats(self):
         return self.data["stats"]
     
-    def add_pending_product(self, product_data):
-        """Добавить товар на модерацию"""
-        if "pending_products" not in self.data:
-            self.data["pending_products"] = []
-        self.data["pending_products"].append(product_data)
-        self.save()
-        return product_data
-    
-    def get_pending_products(self):
-        """Получить все товары на модерации"""
-        return self.data.get("pending_products", [])
-    
-    def remove_pending_product(self, product_id):
-        """Удалить товар из очереди модерации"""
-        self.data["pending_products"] = [p for p in self.data.get("pending_products", []) 
-                                         if p.get("product_id") != product_id]
-        self.save()
-    
-    def approve_pending_product(self, product_id):
-        """Одобрить товар и добавить в каталог"""
-        pending = next((p for p in self.data.get("pending_products", []) 
-                       if p.get("product_id") == product_id), None)
-        if pending:
-            # Добавляем в каталог с указанием владельца
-            self.add_product(
-                pending["product_id"],
-                pending["name"],
-                pending["description"],
-                pending["price"],
-                pending["material"],
-                pending.get("category", "Без категории"),
-                pending.get("delivery_type", "auto"),
-                pending.get("stock", None),
-                owner_id=pending.get("user_id")  # Сохраняем владельца товара
-            )
-            # Удаляем из очереди модерации
-            self.remove_pending_product(product_id)
-            return True
-        return False
 
     def set_start_message(self, text, media_type=None, media_id=None):
         self.data["start_message"] = {
@@ -506,17 +462,8 @@ def get_main_keyboard(page=0, category="Все"):
             else:
                 stock_text = f" (осталось: {stock})"
         
-        # Показываем продавца товара
-        owner_id = product.get("owner_id")
-        seller_text = ""
-        if owner_id:
-            # Получаем username владельца
-            owner_data = db.data.get("users", {}).get(str(owner_id), {})
-            owner_username = owner_data.get("username", f"ID{owner_id}")
-            seller_text = f" 👤 @{owner_username}"
-        
         keyboard.append([InlineKeyboardButton(
-            text=f"🛍 {product['name']} - {product['price']} ⭐{stock_text}{seller_text}",
+            text=f"🛍 {product['name']} - {product['price']} ⭐{stock_text}",
             callback_data=f"buy_{pid}"
         )])
     
@@ -536,17 +483,13 @@ def get_admin_keyboard():
     pending_count = len(db.get_pending_orders())
     pending_text = f"⏳ Ожидают выдачи ({pending_count})" if pending_count > 0 else "⏳ Ожидают выдачи"
     
-    pending_products_count = len(db.get_pending_products())
-    pending_products_text = f"🔍 Товары на модерации ({pending_products_count})" if pending_products_count > 0 else "🔍 Товары на модерации"
-    
     keyboard = [
         [InlineKeyboardButton(text="➕ Добавить товар", callback_data="admin_add_product")],
         [InlineKeyboardButton(text="📋 Список товаров", callback_data="admin_list_products")],
         [InlineKeyboardButton(text="🎫 Промокоды", callback_data="admin_promo_codes")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="📦 Заказы", callback_data="admin_orders")],
-        [InlineKeyboardButton(text=pending_text, callback_data="admin_pending_orders")],
-        [InlineKeyboardButton(text=pending_products_text, callback_data="admin_pending_products")]
+        [InlineKeyboardButton(text=pending_text, callback_data="admin_pending_orders")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -807,177 +750,17 @@ async def cmd_profile(message: Message):
         "👤 <b>Личный кабинет</b>\n\n"
         f"ID: <code>{user_id}</code>\n"
         f"Имя: @{message.from_user.username or 'Без username'}\n\n"
-        f"💰 <b>Баланс:</b> {balance} ⭐\n"
         f"<b>Заказов:</b> {orders_count}\n"
-        f"<b>Рефералов:</b> {referrals_count}\n\n"
-        "<i>Зарабатывайте на продаже товаров! При продаже вы получаете 98% от цены.</i>"
+        f"<b>Рефералов:</b> {referrals_count}"
     )
     
-    # Обычные пользователи не могут пополнять баланс - только зарабатывать на продаже товаров
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💸 Вывести средства", callback_data="withdraw_balance")],
         [InlineKeyboardButton(text="🎫 Активировать промокод", callback_data="activate_promo")],
         [InlineKeyboardButton(text="📜 Мои заказы", callback_data="my_orders")],
-        [InlineKeyboardButton(text="🎯 Реферальная программа", callback_data="referral_program")],
-        [InlineKeyboardButton(text="➕ Добавить товар", callback_data="user_add_product")]
+        [InlineKeyboardButton(text="🎯 Реферальная программа", callback_data="referral_program")]
     ])
     
     await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-
-
-@router.callback_query(F.data == "topup_balance")
-async def process_topup_balance(callback: CallbackQuery):
-    """Выбор суммы пополнения (только для админов)"""
-    # Обычные пользователи не могут пополнять баланс
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Пополнение баланса недоступно! Зарабатывайте на продаже товаров.", show_alert=True)
-        return
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ 10 звезд", callback_data="topup_10")],
-        [InlineKeyboardButton(text="⭐ 50 звезд", callback_data="topup_50")],
-        [InlineKeyboardButton(text="⭐ 100 звезд", callback_data="topup_100")],
-        [InlineKeyboardButton(text="⭐ 250 звезд", callback_data="topup_250")],
-        [InlineKeyboardButton(text="⭐ 500 звезд", callback_data="topup_500")],
-        [InlineKeyboardButton(text="💳 CryptoBot (USDT)", callback_data="topup_crypto")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_profile")]
-    ])
-    
-    await callback.message.edit_text(
-        "💰 <b>Пополнение баланса</b>\n\n"
-        "Выберите способ пополнения:\n\n"
-        "💡 <i>Звезды будут конвертированы в баланс 1:1</i>",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("topup_") & ~F.data.startswith("topup_crypto"))
-async def process_topup_amount(callback: CallbackQuery):
-    """Обработка пополнения баланса через Telegram Stars"""
-    try:
-        if callback.data == "topup_balance":
-            return
-        
-        amount = int(callback.data.replace("topup_", ""))
-        
-        prices = [LabeledPrice(label=f"Пополнение баланса на {amount} ⭐", amount=amount)]
-        
-        await callback.message.answer_invoice(
-            title=f"💰 Пополнение баланса",
-            description=f"Пополнение баланса на {amount} звезд",
-            payload=f"topup_{amount}",
-            provider_token="",
-            currency="XTR",
-            prices=prices
-        )
-        await callback.answer()
-    except Exception as e:
-        logger.error(f"Ошибка пополнения: {e}")
-        await callback.answer("❌ Ошибка", show_alert=True)
-
-
-@router.callback_query(F.data == "topup_crypto")
-async def process_topup_crypto(callback: CallbackQuery):
-    """Пополнение баланса через CryptoBot"""
-    try:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⭐ 10 звезд", callback_data="topup_crypto_10")],
-            [InlineKeyboardButton(text="⭐ 50 звезд", callback_data="topup_crypto_50")],
-            [InlineKeyboardButton(text="⭐ 100 звезд", callback_data="topup_crypto_100")],
-            [InlineKeyboardButton(text="⭐ 250 звезд", callback_data="topup_crypto_250")],
-            [InlineKeyboardButton(text="⭐ 500 звезд", callback_data="topup_crypto_500")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="topup_balance")]
-        ])
-        
-        await callback.message.edit_text(
-            "💳 <b>Пополнение баланса через CryptoBot</b>\n\n"
-            "Выберите сумму пополнения:\n\n"
-            "💡 <i>1 звезда ≈ 0.015 USDT</i>",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
-        )
-        await callback.answer()
-    except Exception as e:
-        logger.error(f"Ошибка пополнения через CryptoBot: {e}")
-        await callback.answer("❌ Ошибка", show_alert=True)
-
-
-@router.callback_query(F.data.startswith("topup_crypto_"))
-async def process_topup_crypto_amount(callback: CallbackQuery):
-    """Создание инвойса CryptoBot для пополнения баланса"""
-    try:
-        amount = int(callback.data.replace("topup_crypto_", ""))
-        # Конвертация: 50 звезд = $0.75, значит 1 звезда = $0.015
-        usdt_amount = amount * 0.015
-        
-        payload = f"topup_{amount}"
-        invoice = await create_cryptobot_invoice(
-            callback.from_user.id,
-            f"Пополнение баланса на {amount} ⭐",
-            usdt_amount,
-            payload
-        )
-        
-        if not invoice:
-            await callback.message.answer(
-                "❌ <b>Ошибка создания платежа</b>\n\n"
-                "Не удалось создать инвойс через CryptoBot.",
-                parse_mode=ParseMode.HTML
-            )
-            await callback.answer()
-            return
-        
-        invoice_url = invoice.get("pay_url")
-        invoice_id = invoice.get("invoice_id")
-        
-        if not invoice_id:
-            await callback.message.answer(
-                "❌ <b>Ошибка создания платежа</b>\n\n"
-                "Не удалось получить ID инвойса от CryptoBot.",
-                parse_mode=ParseMode.HTML
-            )
-            await callback.answer()
-            return
-        
-        # Сохраняем invoice_id для проверки
-        if "crypto_invoices" not in db.data:
-            db.data["crypto_invoices"] = {}
-        db.data["crypto_invoices"][str(invoice_id)] = {
-            "user_id": callback.from_user.id,
-            "type": "topup",
-            "amount": amount,
-            "status": "pending",
-            "created_at": datetime.now().isoformat()
-        }
-        db.save()
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить через CryptoBot", url=invoice_url)]
-        ])
-        
-        await callback.message.answer(
-            f"💳 <b>Пополнение баланса через CryptoBot</b>\n\n"
-            f"Сумма: {amount} ⭐\n"
-            f"К оплате: {usdt_amount:.2f} USDT\n\n"
-            f"Нажмите кнопку ниже для оплаты:",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
-        )
-        await callback.answer()
-    except ValueError as e:
-        logger.error(f"Ошибка парсинга суммы: {e}")
-        await callback.answer("❌ Неверная сумма", show_alert=True)
-    except Exception as e:
-        logger.error(f"Ошибка создания инвойса для пополнения: {e}", exc_info=True)
-        await callback.message.answer(
-            f"❌ <b>Ошибка</b>\n\n"
-            f"Детали: {str(e)}\n\n"
-            f"Проверьте логи бота для подробностей.",
-            parse_mode=ParseMode.HTML
-        )
-        await callback.answer("❌ Ошибка", show_alert=True)
 
 
 @router.callback_query(F.data == "back_to_profile")
@@ -992,66 +775,18 @@ async def back_to_profile(callback: CallbackQuery):
         "👤 <b>Личный кабинет</b>\n\n"
         f"ID: <code>{user_id}</code>\n"
         f"Имя: @{callback.from_user.username or 'Без username'}\n\n"
-        f"💰 <b>Баланс:</b> {balance} ⭐\n"
         f"<b>Заказов:</b> {orders_count}\n"
-        f"<b>Рефералов:</b> {referrals_count}\n\n"
-        "<i>Зарабатывайте на продаже товаров! При продаже вы получаете 98% от цены.</i>"
+        f"<b>Рефералов:</b> {referrals_count}"
     )
     
-    # Обычные пользователи не могут пополнять баланс - только зарабатывать на продаже товаров
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💸 Вывести средства", callback_data="withdraw_balance")],
         [InlineKeyboardButton(text="🎫 Активировать промокод", callback_data="activate_promo")],
         [InlineKeyboardButton(text="📜 Мои заказы", callback_data="my_orders")],
-        [InlineKeyboardButton(text="🎯 Реферальная программа", callback_data="referral_program")],
-        [InlineKeyboardButton(text="➕ Добавить товар", callback_data="user_add_product")]
+        [InlineKeyboardButton(text="🎯 Реферальная программа", callback_data="referral_program")]
     ])
     
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     await callback.answer()
-
-
-@router.callback_query(F.data == "withdraw_balance")
-async def process_withdraw_balance(callback: CallbackQuery):
-    """Запрос на вывод средств"""
-    user_id = callback.from_user.id
-    balance = db.get_balance(user_id)
-    
-    if balance <= 0:
-        await callback.answer("❌ У вас нет средств для вывода!", show_alert=True)
-        return
-    
-    await callback.message.edit_text(
-        f"💸 <b>Вывод средств</b>\n\n"
-        f"💰 Ваш баланс: {balance} ⭐\n\n"
-        f"Для вывода средств напишите администратору:\n"
-        f"• Ваш ID: <code>{user_id}</code>\n"
-        f"• Сумма вывода: {balance} ⭐\n"
-        f"• Способ получения (Telegram Stars, CryptoBot и т.д.)\n\n"
-        f"Администратор обработает ваш запрос в ближайшее время.\n\n"
-        f"💡 <i>Минимальная сумма вывода: 10 ⭐</i>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📝 Написать админу", url=f"https://t.me/{BOT_CREATOR.replace('@', '')}")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_profile")]
-        ]),
-        parse_mode=ParseMode.HTML
-    )
-    await callback.answer()
-    
-    # Уведомляем админов о запросе на вывод
-    for admin_id in ADMIN_IDS:
-        try:
-            await callback.bot.send_message(
-                admin_id,
-                f"💸 <b>Запрос на вывод средств</b>\n\n"
-                f"👤 Пользователь: @{callback.from_user.username or 'Без username'}\n"
-                f"🆔 ID: <code>{user_id}</code>\n"
-                f"💰 Сумма: {balance} ⭐\n\n"
-                f"Обработайте запрос через команду /pay {user_id} <сумма>",
-                parse_mode=ParseMode.HTML
-            )
-        except:
-            pass
 
 
 @router.callback_query(F.data == "referral_program")
@@ -1068,8 +803,8 @@ async def process_referral_program(callback: CallbackQuery):
         f"<b>Ваша реферальная ссылка:</b>\n"
         f"<code>{referral_link}</code>\n\n"
         "<b>Бонусы:</b>\n"
-        "• Друг пополняет баланс → вы получаете 10%\n\n"
-        "<i>Чем больше рефералов, тем больше заработок</i>"
+        "• При покупке товара рефералом вы получаете бонус\n\n"
+        "<i>Чем больше рефералов, тем больше бонусов</i>"
     )
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1077,446 +812,6 @@ async def process_referral_program(callback: CallbackQuery):
     ])
     
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    await callback.answer()
-
-
-# ============= ПОЛЬЗОВАТЕЛИ: ДОБАВЛЕНИЕ ТОВАРА =============
-@router.callback_query(F.data == "user_add_product")
-async def user_add_product_start(callback: CallbackQuery, state: FSMContext):
-    """Начало добавления товара пользователем"""
-    # Показываем предупреждение о запрещенных товарах
-    warning_text = (
-        "⚠️ <b>Внимание!</b>\n\n"
-        "<b>Запрещено выставлять:</b>\n"
-        "❌ 18+ материалы\n"
-        "❌ Базы данных\n"
-        "❌ Краденые аккаунты\n\n"
-        "Товар будет проверен администратором перед публикацией.\n\n"
-        "Продолжить?"
-    )
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Продолжить", callback_data="user_add_product_confirm")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_profile")]
-    ])
-    
-    await callback.message.edit_text(warning_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "user_add_product_confirm")
-async def user_add_product_confirm(callback: CallbackQuery, state: FSMContext):
-    """Подтверждение добавления товара"""
-    await callback.message.edit_text(
-        "📝 <b>Добавление товара</b>\n\n"
-        "Введите название товара:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_profile")]
-        ]),
-        parse_mode=ParseMode.HTML
-    )
-    await state.set_state(UserProductStates.waiting_product_name)
-    await callback.answer()
-
-
-@router.message(UserProductStates.waiting_product_name)
-async def user_product_name(message: Message, state: FSMContext):
-    """Обработка названия товара от пользователя"""
-    await state.update_data(name=message.text)
-    await message.answer(
-        "📝 Введите описание товара:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
-        ])
-    )
-    await state.set_state(UserProductStates.waiting_product_description)
-
-
-@router.message(UserProductStates.waiting_product_description)
-async def user_product_description(message: Message, state: FSMContext):
-    """Обработка описания товара от пользователя"""
-    await state.update_data(description=message.text)
-    await message.answer(
-        "💰 Введите цену в звездах (целое число, минимум 1):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
-        ])
-    )
-    await state.set_state(UserProductStates.waiting_product_price)
-
-
-@router.message(UserProductStates.waiting_product_price)
-async def user_product_price(message: Message, state: FSMContext):
-    """Обработка цены товара от пользователя"""
-    try:
-        price = int(message.text)
-        if price < 1:
-            await message.answer("❌ Цена должна быть минимум 1 ⭐! Введите корректную цену:")
-            return
-    except ValueError:
-        await message.answer("❌ Введите корректную цену (целое число, минимум 1)!")
-        return
-    
-    await state.update_data(price=price)
-    
-    # Получаем категории
-    categories = db.get_categories()
-    keyboard = []
-    for cat in categories[:3]:  # Максимум 3 в ряд
-        keyboard.append([InlineKeyboardButton(text=f"📁 {cat}", callback_data=f"user_select_cat_{cat}")])
-    keyboard.append([InlineKeyboardButton(text="⏭ Пропустить", callback_data="user_skip_category")])
-    keyboard.append([InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")])
-    
-    await message.answer(
-        "📁 <b>Выберите категорию товара:</b>\n\n"
-        "Или пропустите этот шаг",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-        parse_mode=ParseMode.HTML
-    )
-    await state.set_state(UserProductStates.waiting_product_category)
-
-
-@router.callback_query(F.data.startswith("user_select_cat_"))
-async def user_select_category(callback: CallbackQuery, state: FSMContext):
-    """Выбор категории пользователем"""
-    category = callback.data.replace("user_select_cat_", "")
-    await state.update_data(category=category)
-    
-    await callback.message.edit_text(
-        "📦 <b>Тип выдачи товара:</b>\n\n"
-        "• <b>Автоматическая</b> - товар выдается сразу после оплаты\n"
-        "• <b>Ручная</b> - товар выдается администратором вручную",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🤖 Автоматическая", callback_data="user_delivery_auto")],
-            [InlineKeyboardButton(text="👤 Ручная", callback_data="user_delivery_manual")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
-        ]),
-        parse_mode=ParseMode.HTML
-    )
-    await state.set_state(UserProductStates.waiting_product_delivery_type)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "user_skip_category")
-async def user_skip_category(callback: CallbackQuery, state: FSMContext):
-    """Пропуск категории"""
-    await state.update_data(category="Без категории")
-    
-    await callback.message.edit_text(
-        "📦 <b>Тип выдачи товара:</b>\n\n"
-        "• <b>Автоматическая</b> - товар выдается сразу после оплаты\n"
-        "• <b>Ручная</b> - товар выдается администратором вручную",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🤖 Автоматическая", callback_data="user_delivery_auto")],
-            [InlineKeyboardButton(text="👤 Ручная", callback_data="user_delivery_manual")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
-        ]),
-        parse_mode=ParseMode.HTML
-    )
-    await state.set_state(UserProductStates.waiting_product_delivery_type)
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("user_delivery_"))
-async def user_select_delivery_type(callback: CallbackQuery, state: FSMContext):
-    """Выбор типа выдачи пользователем"""
-    delivery_type = callback.data.replace("user_delivery_", "")
-    await state.update_data(delivery_type=delivery_type)
-    
-    await callback.message.edit_text(
-        "📊 <b>Количество товара:</b>\n\n"
-        "Выберите количество товара на складе:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="∞ Безлимит", callback_data="user_stock_unlimited")],
-            [InlineKeyboardButton(text="🔢 Указать количество", callback_data="user_stock_custom")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
-        ]),
-        parse_mode=ParseMode.HTML
-    )
-    await state.set_state(UserProductStates.waiting_product_stock)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "user_stock_unlimited")
-async def user_stock_unlimited(callback: CallbackQuery, state: FSMContext):
-    """Безлимитный товар"""
-    await state.update_data(stock=None)
-    
-    await callback.message.edit_text(
-        "📦 <b>Отправьте материал товара:</b>\n\n"
-        "Вы можете отправить:\n"
-        "• Текст\n"
-        "• Фото\n"
-        "• Видео\n\n"
-        "Этот материал будет выдан покупателю после оплаты.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
-        ]),
-        parse_mode=ParseMode.HTML
-    )
-    await state.set_state(UserProductStates.waiting_product_material)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "user_stock_custom")
-async def user_stock_custom(callback: CallbackQuery, state: FSMContext):
-    """Ввод количества товара"""
-    await callback.message.edit_text(
-        "🔢 <b>Введите количество товара:</b>\n\n"
-        "Укажите, сколько единиц товара будет доступно для продажи.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
-        ]),
-        parse_mode=ParseMode.HTML
-    )
-    await state.set_state(UserProductStates.waiting_product_stock)
-    await callback.answer()
-
-
-@router.message(UserProductStates.waiting_product_stock)
-async def user_product_stock_input(message: Message, state: FSMContext):
-    """Обработка количества товара от пользователя"""
-    try:
-        stock = int(message.text)
-        if stock < 1:
-            await message.answer("❌ Количество должно быть минимум 1! Введите корректное количество:")
-            return
-    except ValueError:
-        await message.answer("❌ Введите корректное количество (целое число, минимум 1)!")
-        return
-    
-    await state.update_data(stock=stock)
-    
-    await message.answer(
-        "📦 <b>Отправьте материал товара:</b>\n\n"
-        "Вы можете отправить:\n"
-        "• Текст\n"
-        "• Фото\n"
-        "• Видео\n\n"
-        "Этот материал будет выдан покупателю после оплаты.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
-        ])
-    )
-    await state.set_state(UserProductStates.waiting_product_material)
-
-
-@router.message(UserProductStates.waiting_product_material)
-async def user_product_material(message: Message, state: FSMContext):
-    """Обработка материала товара от пользователя"""
-    material = {}
-    
-    if message.text:
-        material = {"type": "text", "content": message.text}
-    elif message.photo:
-        material = {"type": "photo", "file_id": message.photo[-1].file_id}
-    elif message.video:
-        material = {"type": "video", "file_id": message.video.file_id}
-    else:
-        await message.answer("❌ Отправьте текст, фото или видео!")
-        return
-    
-    data = await state.get_data()
-    product_id = f"user_prod_{int(time.time())}_{message.from_user.id}"
-    
-    # Сохраняем товар на модерацию
-    pending_product = {
-        "product_id": product_id,
-        "user_id": message.from_user.id,
-        "username": message.from_user.username or "Без username",
-        "name": data["name"],
-        "description": data["description"],
-        "price": data["price"],
-        "category": data.get("category", "Без категории"),
-        "material": material,
-        "delivery_type": data.get("delivery_type", "auto"),
-        "stock": data.get("stock", None),
-        "created_at": datetime.now().isoformat(),
-        "status": "pending"
-    }
-    
-    db.add_pending_product(pending_product)
-    
-    # Уведомляем пользователя
-    await message.answer(
-        f"✅ <b>Товар отправлен на модерацию!</b>\n\n"
-        f"Название: {data['name']}\n"
-        f"Описание: {data['description']}\n"
-        f"Цена: {data['price']} ⭐\n"
-        f"Категория: {data.get('category', 'Без категории')}\n\n"
-        f"⏳ Товар будет проверен администратором и добавлен в каталог после одобрения.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ В профиль", callback_data="back_to_profile")]
-        ]),
-        parse_mode=ParseMode.HTML
-    )
-    
-    # Уведомляем админов
-    for admin_id in ADMIN_IDS:
-        try:
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_product_{product_id}")],
-                [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_product_{product_id}")]
-            ])
-            
-            await message.bot.send_message(
-                admin_id,
-                f"🔔 <b>Новый товар на модерации</b>\n\n"
-                f"👤 От: @{message.from_user.username or message.from_user.id} (ID: {message.from_user.id})\n\n"
-                f"📝 Название: {data['name']}\n"
-                f"📄 Описание: {data['description']}\n"
-                f"💰 Цена: {data['price']} ⭐\n"
-                f"📁 Категория: {data.get('category', 'Без категории')}\n"
-                f"📦 Материал: {'Текст' if material['type'] == 'text' else material['type'].capitalize()}\n\n"
-                f"ID товара: <code>{product_id}</code>",
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML
-            )
-        except Exception as e:
-            logger.error(f"Ошибка уведомления админа {admin_id}: {e}")
-    
-    logger.info(f"Пользователь {message.from_user.id} добавил товар на модерацию: {product_id}")
-    await state.clear()
-
-
-@router.callback_query(F.data == "user_cancel_product")
-async def user_cancel_product(callback: CallbackQuery, state: FSMContext):
-    """Отмена добавления товара"""
-    await state.clear()
-    await callback.message.edit_text(
-        "❌ Добавление товара отменено",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ В профиль", callback_data="back_to_profile")]
-        ])
-    )
-    await callback.answer()
-
-
-# ============= АДМИН: МОДЕРАЦИЯ ТОВАРОВ =============
-@router.callback_query(F.data.startswith("approve_product_"))
-async def admin_approve_product(callback: CallbackQuery):
-    """Одобрение товара администратором"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Нет доступа!", show_alert=True)
-        return
-    
-    product_id = callback.data.replace("approve_product_", "")
-    
-    if db.approve_pending_product(product_id):
-        await callback.message.edit_text(
-            f"✅ <b>Товар одобрен и добавлен в каталог!</b>\n\n"
-            f"ID: <code>{product_id}</code>",
-            parse_mode=ParseMode.HTML
-        )
-        
-        # Уведомляем пользователя
-        pending = next((p for p in db.data.get("pending_products", []) 
-                       if p.get("product_id") == product_id), None)
-        if pending:
-            try:
-                await callback.bot.send_message(
-                    pending["user_id"],
-                    f"✅ <b>Ваш товар одобрен и выставлен на продажу!</b>\n\n"
-                    f"📝 Товар: <b>\"{pending['name']}\"</b>\n"
-                    f"💰 Цена: {pending['price']} ⭐\n"
-                    f"📁 Категория: {pending.get('category', 'Без категории')}\n\n"
-                    f"🎉 Товар добавлен в каталог и теперь его могут покупать другие пользователи!\n\n"
-                    f"💡 При каждой продаже вы получите 98% от цены на баланс.",
-                    parse_mode=ParseMode.HTML
-                )
-            except:
-                pass
-        
-        logger.info(f"Админ {callback.from_user.id} одобрил товар {product_id}")
-    else:
-        await callback.answer("❌ Товар не найден!", show_alert=True)
-    
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("reject_product_"))
-async def admin_reject_product(callback: CallbackQuery):
-    """Отклонение товара администратором"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Нет доступа!", show_alert=True)
-        return
-    
-    product_id = callback.data.replace("reject_product_", "")
-    pending = next((p for p in db.data.get("pending_products", []) 
-                   if p.get("product_id") == product_id), None)
-    
-    if pending:
-        db.remove_pending_product(product_id)
-        await callback.message.edit_text(
-            f"❌ <b>Товар отклонен</b>\n\n"
-            f"ID: <code>{product_id}</code>",
-            parse_mode=ParseMode.HTML
-        )
-        
-        # Уведомляем пользователя
-        try:
-            await callback.bot.send_message(
-                pending["user_id"],
-                f"❌ <b>Ваш товар отклонен</b>\n\n"
-                f"Товар <b>\"{pending['name']}\"</b> был отклонен администратором.\n\n"
-                f"Возможные причины:\n"
-                f"• Нарушение правил (18+, базы данных, краденые аккаунты)\n"
-                f"• Некорректное описание\n"
-                f"• Другая причина",
-                parse_mode=ParseMode.HTML
-            )
-        except:
-            pass
-        
-        logger.info(f"Админ {callback.from_user.id} отклонил товар {product_id}")
-    else:
-        await callback.answer("❌ Товар не найден!", show_alert=True)
-    
-    await callback.answer()
-
-
-# ============= АДМИН: ТОВАРЫ НА МОДЕРАЦИИ =============
-@router.callback_query(F.data == "admin_pending_products")
-async def admin_pending_products(callback: CallbackQuery):
-    """Просмотр товаров на модерации"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Нет доступа!", show_alert=True)
-        return
-    
-    pending = db.get_pending_products()
-    if not pending:
-        await callback.message.edit_text(
-            "🔍 <b>Нет товаров на модерации</b>\n\n"
-            "Все товары обработаны!",
-            reply_markup=get_admin_keyboard(),
-            parse_mode=ParseMode.HTML
-        )
-        await callback.answer()
-        return
-    
-    text = f"🔍 <b>Товары на модерации:</b> {len(pending)}\n\n"
-    keyboard = []
-    
-    for product in pending:
-        date = datetime.fromisoformat(product.get("created_at", datetime.now().isoformat())).strftime("%d.%m.%Y %H:%M")
-        text += (
-            f"📝 <b>{product['name']}</b>\n"
-            f"💰 {product['price']} ⭐\n"
-            f"👤 @{product['username']} (ID: {product['user_id']})\n"
-            f"📅 {date}\n\n"
-        )
-        keyboard.append([
-            InlineKeyboardButton(text=f"✅ Одобрить", callback_data=f"approve_product_{product['product_id']}"),
-            InlineKeyboardButton(text=f"❌ Отклонить", callback_data=f"reject_product_{product['product_id']}")
-        ])
-    
-    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_back")])
-    
-    await callback.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-        parse_mode=ParseMode.HTML
-    )
     await callback.answer()
 
 
@@ -2071,23 +1366,13 @@ async def process_quantity(callback: CallbackQuery):
         
         await callback.answer()
         
-        user_balance = db.get_balance(callback.from_user.id)
         total_price = product["price"] * quantity
         
-        # Создаем клавиатуру с вариантами оплаты
-        # Обычные пользователи могут оплачивать балансом только если у них есть заработанные средства
-        keyboard_buttons = []
-        
-        # Показываем кнопку баланса только если у пользователя есть баланс (заработанные средства)
-        if user_balance > 0:
-            keyboard_buttons.append([InlineKeyboardButton(text=f"💰 Баланс ({user_balance} ⭐)", callback_data=f"pay_balance_{product_id}_{quantity}")])
-        
-        keyboard_buttons.extend([
+        # Создаем клавиатуру с вариантами оплаты (только Stars и CryptoBot)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⭐ Telegram Stars", callback_data=f"pay_stars_{product_id}_{quantity}")],
             [InlineKeyboardButton(text="💳 CryptoBot (USDT)", callback_data=f"pay_crypto_{product_id}_{quantity}")]
         ])
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
         
         await callback.message.answer(
             f"🛍 <b>{product['name']}</b>\n\n"
@@ -2101,173 +1386,6 @@ async def process_quantity(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Ошибка при выборе количества: {e}")
         await callback.answer("❌ Ошибка!", show_alert=True)
-
-
-@router.callback_query(F.data.startswith("pay_balance_"))
-async def process_pay_with_balance(callback: CallbackQuery):
-    """Оплата товара балансом"""
-    try:
-        # Используем rsplit чтобы разделить только по последнему подчеркиванию
-        data = callback.data.replace("pay_balance_", "")
-        parts = data.rsplit("_", 1)
-        if len(parts) != 2:
-            await callback.answer("❌ Ошибка формата!", show_alert=True)
-            return
-        
-        product_id = parts[0]
-        quantity = int(parts[1])
-        
-        product = db.get_product(product_id)
-        
-        if not product:
-            await callback.answer("❌ Товар не найден!", show_alert=True)
-            return
-        
-        user_id = callback.from_user.id
-        balance = db.get_balance(user_id)
-        price = product["price"] * quantity
-        
-        if balance < price:
-            await callback.answer(
-                f"❌ Недостаточно средств!\n\n"
-                f"Ваш баланс: {balance} ⭐\n"
-                f"Нужно: {price} ⭐\n\n"
-                "Пополните баланс в личном кабинете!",
-                show_alert=True
-            )
-            return
-        
-        # Списываем средства
-        if not db.subtract_balance(user_id, price):
-            await callback.answer("❌ Ошибка списания средств!", show_alert=True)
-            return
-        
-        await callback.answer("✅ Оплачено!", show_alert=True)
-        
-        # Выдаем товар
-        delivery_type = product.get("delivery_type", "auto")
-        
-        await callback.message.answer(
-            f"✅ <b>Спасибо за покупку!</b>\n\n"
-            f"Товар: {product['name']}\n"
-            f"Количество: {quantity} шт.\n"
-            f"Цена: {price} ⭐\n"
-            f"Списано с баланса: {price} ⭐\n"
-            f"Остаток: {db.get_balance(user_id)} ⭐\n\n"
-            "💬 Хотите оставить сообщение к заказу? (Напишите сообщение или отправьте /skip)",
-            parse_mode=ParseMode.HTML
-        )
-        
-        # Сохраняем данные для запроса сообщения в БД (временное решение)
-        if "buy_messages" not in db.data:
-            db.data["buy_messages"] = {}
-        db.data["buy_messages"][str(user_id)] = {
-            "product_id": product_id,
-            "quantity": quantity,
-            "price": price,
-            "payment_type": "balance"
-        }
-        db.save()
-        
-        if delivery_type == "manual":
-            # Ручная выдача
-            pending = db.add_pending_order(
-                user_id,
-                callback.from_user.username or "Без username",
-                product_id,
-                product["name"],
-                price,
-                quantity
-            )
-            
-            await callback.message.answer(
-                "⏳ <b>Ваш заказ принят!</b>\n\n"
-                "Товар будет выдан вручную администратором.",
-                parse_mode=ParseMode.HTML
-            )
-            
-            for admin_id in ADMIN_IDS:
-                try:
-                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="✅ Выдать товар", callback_data=f"deliver_{pending['order_id']}")]
-                    ])
-                    await callback.bot.send_message(
-                        admin_id,
-                        f"🔔 <b>Новый заказ (оплата балансом)!</b>\n\n"
-                        f"Товар: {product['name']}\n"
-                        f"Количество: {quantity} шт.\n"
-                        f"Цена: {price} ⭐\n"
-                        f"Покупатель: @{callback.from_user.username or callback.from_user.id}",
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=keyboard
-                    )
-                except:
-                    pass
-            
-            db.add_order(user_id, callback.from_user.username or "Без username",
-                        product_id, product["name"], price, status="pending", quantity=quantity)
-        else:
-            # Автоматическая выдача - выдаем quantity раз
-            material = product["material"]
-            for i in range(quantity):
-                if material["type"] == "text":
-                    await callback.message.answer(f"📄 <b>Ваш материал ({i+1}/{quantity}):</b>\n\n{material['content']}", parse_mode=ParseMode.HTML)
-                elif material["type"] == "file":
-                    await callback.message.answer_document(document=material["file_id"], caption=f"📄 Ваш материал ({i+1}/{quantity})")
-                elif material["type"] == "photo":
-                    await callback.message.answer_photo(photo=material["file_id"], caption=f"📄 Ваш материал ({i+1}/{quantity})")
-                elif material["type"] == "video":
-                    await callback.message.answer_video(video=material["file_id"], caption=f"📄 Ваш материал ({i+1}/{quantity})")
-                await asyncio.sleep(0.5)  # Небольшая задержка между выдачами
-            
-            # Начисляем деньги владельцу товара (98% от цены, 2% комиссия)
-            owner_id = product.get("owner_id")
-            if owner_id and owner_id != user_id:  # Если товар принадлежит пользователю
-                owner_earnings = int(price * 0.98)  # 98% владельцу
-                db.add_balance(owner_id, owner_earnings)
-                
-                # Уведомляем владельца
-                try:
-                    await callback.bot.send_message(
-                        owner_id,
-                        f"💰 <b>Ваш товар куплен!</b>\n\n"
-                        f"Товар: {product['name']}\n"
-                        f"Количество: {quantity} шт.\n"
-                        f"Цена: {price} ⭐\n"
-                        f"💰 Вам начислено: <b>{owner_earnings} ⭐</b> (98%)\n"
-                        f"💳 Ваш баланс: {db.get_balance(owner_id)} ⭐\n\n"
-                        f"Покупатель: @{callback.from_user.username or callback.from_user.id}",
-                        parse_mode=ParseMode.HTML
-                    )
-                except:
-                    pass
-                logger.info(f"Владельцу товара {owner_id} начислено {owner_earnings} ⭐ за покупку товара {product_id}")
-            
-            for admin_id in ADMIN_IDS:
-                try:
-                    await callback.bot.send_message(
-                        admin_id,
-                        f"💰 <b>Продажа (баланс)!</b>\n\n"
-                        f"Товар: {product['name']}\n"
-                        f"Количество: {quantity} шт.\n"
-                        f"Цена: {price} ⭐\n"
-                        f"Покупатель: @{callback.from_user.username or callback.from_user.id}",
-                        parse_mode=ParseMode.HTML
-                    )
-                except:
-                    pass
-            
-            db.add_order(user_id, callback.from_user.username or "Без username",
-                        product_id, product["name"], price, status="completed", quantity=quantity)
-        
-        # Уменьшаем остаток на quantity
-        for _ in range(quantity):
-            db.decrease_stock(product_id)
-        logger.info(f"Товар {product_id} куплен за баланс пользователем {user_id}")
-        
-    except Exception as e:
-        logger.error(f"Ошибка оплаты балансом: {e}", exc_info=True)
-        await callback.answer("❌ Ошибка", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("pay_stars_"))
@@ -2899,29 +2017,6 @@ async def process_successful_payment(message: Message):
                         caption=f"📄 Ваш материал ({i+1}/{quantity})"
                     )
                 await asyncio.sleep(0.5)  # Небольшая задержка между выдачами
-
-            # Начисляем деньги владельцу товара (98% от цены, 2% комиссия)
-            owner_id = product.get("owner_id")
-            if owner_id and owner_id != message.from_user.id:  # Если товар принадлежит пользователю
-                owner_earnings = int(total_price * 0.98)  # 98% владельцу
-                db.add_balance(owner_id, owner_earnings)
-                
-                # Уведомляем владельца
-                try:
-                    await message.bot.send_message(
-                        owner_id,
-                        f"💰 <b>Ваш товар куплен!</b>\n\n"
-                        f"Товар: {product['name']}\n"
-                        f"Количество: {quantity} шт.\n"
-                        f"Цена: {total_price} ⭐\n"
-                        f"💰 Вам начислено: <b>{owner_earnings} ⭐</b> (98%)\n"
-                        f"💳 Ваш баланс: {db.get_balance(owner_id)} ⭐\n\n"
-                        f"Покупатель: @{message.from_user.username or message.from_user.id}",
-                        parse_mode=ParseMode.HTML
-                    )
-                except:
-                    pass
-                logger.info(f"Владельцу товара {owner_id} начислено {owner_earnings} ⭐ за покупку товара {product_id}")
 
             # Уведомляем админов о продаже
             for admin_id in ADMIN_IDS:
@@ -4086,8 +3181,8 @@ async def process_buy_message(message: Message, state: FSMContext):
     # Проверяем, не находится ли пользователь в состоянии админ-панели или добавления товара
     # Админские и пользовательские обработчики имеют приоритет
     current_state = await state.get_state()
-    if current_state and (current_state.startswith("AdminStates") or current_state.startswith("UserProductStates")):
-        return  # Не обрабатываем, если пользователь в админ-панели или добавляет товар
+    if current_state and current_state.startswith("AdminStates"):
+        return  # Не обрабатываем, если пользователь в админ-панели
     
     user_id = str(message.from_user.id)
     
@@ -4351,29 +3446,6 @@ async def process_crypto_payment_success(bot: Bot, invoice_id: int, invoice_data
                     elif material["type"] == "video":
                         await bot.send_video(user_id, video=material["file_id"], caption=f"📄 Ваш материал ({i+1}/{quantity})")
                     await asyncio.sleep(0.5)
-                
-                # Начисляем деньги владельцу товара (98% от цены, 2% комиссия)
-                owner_id = product.get("owner_id")
-                if owner_id and owner_id != user_id:  # Если товар принадлежит пользователю
-                    owner_earnings = int(price * 0.98)  # 98% владельцу
-                    db.add_balance(owner_id, owner_earnings)
-                    
-                    # Уведомляем владельца
-                    try:
-                        await bot.send_message(
-                            owner_id,
-                            f"💰 <b>Ваш товар куплен!</b>\n\n"
-                            f"Товар: {product['name']}\n"
-                            f"Количество: {quantity} шт.\n"
-                            f"Цена: {price} ⭐\n"
-                            f"💰 Вам начислено: <b>{owner_earnings} ⭐</b> (98%)\n"
-                            f"💳 Ваш баланс: {db.get_balance(owner_id)} ⭐\n\n"
-                            f"Покупатель: ID {user_id}",
-                            parse_mode=ParseMode.HTML
-                        )
-                    except:
-                        pass
-                    logger.info(f"Владельцу товара {owner_id} начислено {owner_earnings} ⭐ за покупку товара {product_id} через CryptoBot")
                 
                 # Уведомляем админов
                 for admin_id in ADMIN_IDS:
