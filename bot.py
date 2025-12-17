@@ -2070,25 +2070,37 @@ async def skip_message(message: Message):
 @router.message(
     F.text & 
     ~F.text.startswith("/") & 
-    ~F.text.in_(["🛍️ Каталог товаров", "👤 Личный кабинет", "📜 Мои заказы", "🎯 Реферальная программа"]) &
-    ~StateFilter(AdminStates.waiting_product_name) &
-    ~StateFilter(AdminStates.waiting_product_description) &
-    ~StateFilter(AdminStates.waiting_product_price) &
-    ~StateFilter(AdminStates.waiting_product_category) &
-    ~StateFilter(AdminStates.waiting_product_delivery_type) &
-    ~StateFilter(AdminStates.waiting_product_stock) &
-    ~StateFilter(AdminStates.waiting_product_material) &
-    ~StateFilter(AdminStates.waiting_edit_field) &
-    ~StateFilter(AdminStates.waiting_start_text) &
-    ~StateFilter(AdminStates.waiting_start_media) &
-    ~StateFilter(AdminStates.waiting_manual_delivery) &
-    ~StateFilter(AdminStates.waiting_promo_code) &
-    ~StateFilter(AdminStates.waiting_create_promo_code) &
-    ~StateFilter(AdminStates.waiting_create_promo_amount) &
-    ~StateFilter(AdminStates.waiting_create_promo_uses)
+    ~F.text.in_(["🛍️ Каталог товаров", "👤 Личный кабинет", "📜 Мои заказы", "🎯 Реферальная программа"])
 )
 async def process_buy_message(message: Message, state: FSMContext):
     """Обработка сообщения после оплаты"""
+    # Проверяем, не находится ли пользователь в состоянии админ-панели
+    current_state = await state.get_state()
+    if current_state:
+        # Список всех админских состояний
+        admin_states = [
+            AdminStates.waiting_product_name,
+            AdminStates.waiting_product_description,
+            AdminStates.waiting_product_price,
+            AdminStates.waiting_product_category,
+            AdminStates.waiting_product_delivery_type,
+            AdminStates.waiting_product_stock,
+            AdminStates.waiting_product_material,
+            AdminStates.waiting_edit_field,
+            AdminStates.waiting_start_text,
+            AdminStates.waiting_start_media,
+            AdminStates.waiting_manual_delivery,
+            AdminStates.waiting_promo_code,
+            AdminStates.waiting_create_promo_code,
+            AdminStates.waiting_create_promo_amount,
+            AdminStates.waiting_create_promo_uses
+        ]
+        
+        # Проверяем, находится ли пользователь в одном из админских состояний
+        for admin_state in admin_states:
+            if current_state == admin_state:
+                return  # Не обрабатываем, если пользователь в админ-панели
+    
     user_id = str(message.from_user.id)
     
     # Проверяем, есть ли ожидающее сообщение
@@ -3373,7 +3385,23 @@ async def main():
         dp = Dispatcher(storage=MemoryStorage())
         dp.include_router(router)
 
-        await bot.delete_webhook(drop_pending_updates=True)
+        # Удаляем webhook с несколькими попытками
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                await bot.delete_webhook(drop_pending_updates=True)
+                logger.info("✅ Webhook успешно удален")
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Попытка {attempt + 1}/{max_retries} удаления webhook не удалась: {e}. Повтор через 2 секунды...")
+                    await asyncio.sleep(2)
+                else:
+                    logger.error(f"Не удалось удалить webhook после {max_retries} попыток: {e}")
+                    raise
+        
+        # Небольшая задержка перед запуском polling
+        await asyncio.sleep(1)
         
         # Устанавливаем команды для автодополнения
         commands = [
@@ -3391,7 +3419,7 @@ async def main():
         
         logger.info("🤖 Бот запущен!")
         logger.info(f"Админы: {ADMIN_IDS}")
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, allowed_updates=["message", "callback_query", "pre_checkout_query", "successful_payment"])
     except Exception as e:
         logger.error(f"Критическая ошибка при запуске: {e}", exc_info=True)
         raise
