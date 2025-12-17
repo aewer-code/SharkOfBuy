@@ -1228,7 +1228,14 @@ async def process_buy(callback: CallbackQuery):
 async def process_quantity(callback: CallbackQuery):
     """Обработка выбора количества"""
     try:
-        parts = callback.data.replace("qty_", "").split("_")
+        # Используем rsplit чтобы разделить только по последнему подчеркиванию
+        # Формат: qty_product_id_quantity
+        data = callback.data.replace("qty_", "")
+        parts = data.rsplit("_", 1)  # Разделяем только по последнему "_"
+        if len(parts) != 2:
+            await callback.answer("❌ Ошибка формата!", show_alert=True)
+            return
+        
         product_id = parts[0]
         quantity = int(parts[1])
         
@@ -1273,9 +1280,15 @@ async def process_quantity(callback: CallbackQuery):
 async def process_pay_with_balance(callback: CallbackQuery):
     """Оплата товара балансом"""
     try:
-        parts = callback.data.replace("pay_balance_", "").split("_")
+        # Используем rsplit чтобы разделить только по последнему подчеркиванию
+        data = callback.data.replace("pay_balance_", "")
+        parts = data.rsplit("_", 1)
+        if len(parts) != 2:
+            await callback.answer("❌ Ошибка формата!", show_alert=True)
+            return
+        
         product_id = parts[0]
-        quantity = int(parts[1]) if len(parts) > 1 else 1
+        quantity = int(parts[1])
         
         product = db.get_product(product_id)
         
@@ -1411,9 +1424,15 @@ async def process_pay_with_balance(callback: CallbackQuery):
 async def process_pay_with_stars(callback: CallbackQuery):
     """Оплата товара Telegram Stars"""
     try:
-        parts = callback.data.replace("pay_stars_", "").split("_")
+        # Используем rsplit чтобы разделить только по последнему подчеркиванию
+        data = callback.data.replace("pay_stars_", "")
+        parts = data.rsplit("_", 1)
+        if len(parts) != 2:
+            await callback.answer("❌ Ошибка формата!", show_alert=True)
+            return
+        
         product_id = parts[0]
-        quantity = int(parts[1]) if len(parts) > 1 else 1
+        quantity = int(parts[1])
         
         product = db.get_product(product_id)
         
@@ -1515,9 +1534,15 @@ def verify_cryptobot_signature(data: dict, signature: str) -> bool:
 async def process_pay_with_crypto(callback: CallbackQuery):
     """Оплата товара через CryptoBot"""
     try:
-        parts = callback.data.replace("pay_crypto_", "").split("_")
+        # Используем rsplit чтобы разделить только по последнему подчеркиванию
+        data = callback.data.replace("pay_crypto_", "")
+        parts = data.rsplit("_", 1)
+        if len(parts) != 2:
+            await callback.answer("❌ Ошибка формата!", show_alert=True)
+            return
+        
         product_id = parts[0]
-        quantity = int(parts[1]) if len(parts) > 1 else 1
+        quantity = int(parts[1])
         
         product = db.get_product(product_id)
         
