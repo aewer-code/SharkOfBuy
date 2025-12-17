@@ -17,7 +17,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
     LabeledPrice, PreCheckoutQuery, ContentType, ReplyKeyboardMarkup, KeyboardButton,
-    BotCommand
+    BotCommand, InlineQuery, InlineQueryResultArticle, InputTextMessageContent
 )
 from aiogram.enums import ChatMemberStatus
 from aiogram.client.default import DefaultBotProperties
@@ -552,14 +552,44 @@ async def cmd_start(message: Message):
                 db.add_subscribed_user(user_id)
         
         # Регистрируем пользователя в системе
+        was_new_user = user_id not in db.data.get("all_users", [])
         db.register_user(user_id, message.from_user.username)
+        
+        # Проверяем реферальную ссылку
+        bonus_given = False
+        if message.text and "start=ref_" in message.text:
+            try:
+                ref_id = int(message.text.split("start=ref_")[1].split()[0])
+                if ref_id != user_id:  # Нельзя быть рефералом самому себе
+                    # Добавляем реферала
+                    db.add_referral(ref_id, user_id)
+                    
+                    # Если это новый пользователь, даем ему бонус 10 звезд
+                    if was_new_user:
+                        db.add_balance(user_id, 10)
+                        bonus_given = True
+                    
+                    # Уведомляем реферера
+                    try:
+                        await message.bot.send_message(
+                            ref_id,
+                            f"🎉 <b>У вас новый реферал!</b>\n\n"
+                            f"👤 @{message.from_user.username or 'Пользователь'}\n\n"
+                            f"💡 Когда он пополнит баланс, вы получите 10% бонус!",
+                            parse_mode=ParseMode.HTML
+                        )
+                    except:
+                        pass
+            except:
+                pass
         
         # Пользователь подписан - показываем приветствие
         balance = db.get_balance(user_id)
+        bonus_text = "\n\n🎁 <b>Вам начислен приветственный бонус: 10 ⭐!</b>" if bonus_given else ""
         welcome_text = (
             "🎉 <b>Добро пожаловать в Shark Of Buy!</b>\n\n"
             "<i>Быстро • Надежно • Безопасно</i>\n\n"
-            f"💰 <b>Баланс:</b> {balance} ⭐\n\n"
+            f"💰 <b>Баланс:</b> {balance} ⭐{bonus_text}\n\n"
             "<b>Доступные команды:</b>\n"
             "/buy - Каталог товаров\n"
             "/profile - Личный кабинет\n"
@@ -593,14 +623,22 @@ async def process_check_subscription(callback: CallbackQuery):
             db.add_subscribed_user(user_id)
             
             # Регистрируем пользователя
+            was_new_user = user_id not in db.data.get("all_users", [])
             db.register_user(user_id, callback.from_user.username)
             
             # Проверяем реферальную ссылку
+            bonus_given = False
             if callback.message.text and "start=ref_" in callback.message.text:
                 try:
                     ref_id = int(callback.message.text.split("start=ref_")[1].split()[0])
                     if ref_id != user_id:  # Нельзя быть рефералом самому себе
                         db.add_referral(ref_id, user_id)
+                        
+                        # Если это новый пользователь, даем ему бонус 10 звезд
+                        if was_new_user:
+                            db.add_balance(user_id, 10)
+                            bonus_given = True
+                        
                         # Уведомляем реферера
                         try:
                             await callback.bot.send_message(
@@ -616,10 +654,11 @@ async def process_check_subscription(callback: CallbackQuery):
                     pass
             
             balance = db.get_balance(user_id)
+            bonus_text = "\n\n🎁 <b>Вам начислен приветственный бонус: 10 ⭐!</b>" if bonus_given else ""
             welcome_text = (
                 "🎉 <b>Добро пожаловать в Shark Of Buy!</b>\n\n"
                 "<i>Быстро • Надежно • Безопасно</i>\n\n"
-                f"💰 <b>Баланс:</b> {balance} ⭐\n\n"
+                f"💰 <b>Баланс:</b> {balance} ⭐{bonus_text}\n\n"
                 "<b>Доступные команды:</b>\n"
                 "/buy - Каталог товаров\n"
                 "/profile - Личный кабинет\n"
@@ -897,6 +936,48 @@ async def process_referral_program(callback: CallbackQuery):
     
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     await callback.answer()
+
+
+# ============= INLINE РЕЖИМ - ОТПРАВКА РЕКЛАМЫ =============
+@router.inline_query()
+async def process_inline_query(inline_query: InlineQuery):
+    """Обработка inline запросов для отправки рекламы"""
+    try:
+        user_id = inline_query.from_user.id
+        bot_username = (await inline_query.bot.get_me()).username
+        
+        # Создаем реферальную ссылку для пользователя
+        referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+        
+        # Текст рекламного сообщения
+        ad_text = (
+            "Привет! 👋\n\n"
+            "Смотри какой бот для покупки товаров: @SharkBuy_rebot\n\n"
+            "Переходи и забирай приветственный бонус в виде 10 ⭐"
+        )
+        
+        # Создаем кнопку с реферальной ссылкой
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎁 ЗАБРАТЬ БОНУС", url=referral_link)]
+        ])
+        
+        # Создаем результат inline запроса
+        result = InlineQueryResultArticle(
+            id="1",
+            title="📢 Отправить рекламу",
+            description="Отправить рекламное сообщение с бонусом",
+            input_message_content=InputTextMessageContent(
+                message_text=ad_text,
+                parse_mode=ParseMode.HTML
+            ),
+            reply_markup=keyboard
+        )
+        
+        await inline_query.answer([result], cache_time=1)
+        
+    except Exception as e:
+        logger.error(f"Ошибка обработки inline запроса: {e}")
+        await inline_query.answer([], cache_time=1)
 
 
 @router.callback_query(F.data == "activate_promo")
