@@ -958,13 +958,12 @@ async def process_inline_query(inline_query: InlineQuery):
         # Текст рекламного сообщения
         ad_text = (
             "Привет! 👋\n\n"
-            "Смотри какой бот для покупки цифровых товаров: @SharkBuy_rebot\n\n"
-            "Переходи и забирай приветственный бонус!"
+            "Смотри какой бот для покупки цифровых товаров: @SharkBuy_rebot"
         )
         
         # Создаем кнопку с реферальной ссылкой
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎁 ЗАБРАТЬ БОНУС", url=referral_link)]
+            [InlineKeyboardButton(text="🔗 Перейти в бот", url=referral_link)]
         ])
         
         # Создаем результат inline запроса
@@ -972,7 +971,7 @@ async def process_inline_query(inline_query: InlineQuery):
         result = InlineQueryResultArticle(
             id=f"ad_{user_id}_{int(time.time())}",  # Уникальный ID
             title="📢 Отправить рекламу",
-            description="Отправить рекламное сообщение с бонусом",
+            description="Отправить рекламное сообщение",
             input_message_content=InputTextMessageContent(
                 message_text=ad_text,
                 parse_mode=ParseMode.HTML
