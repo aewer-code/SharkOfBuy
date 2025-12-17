@@ -559,29 +559,41 @@ async def cmd_start(message: Message):
         bonus_given = False
         if message.text and "start=ref_" in message.text:
             try:
-                ref_id = int(message.text.split("start=ref_")[1].split()[0])
-                if ref_id != user_id:  # Нельзя быть рефералом самому себе
-                    # Добавляем реферала
-                    db.add_referral(ref_id, user_id)
+                # Парсим реферальную ссылку более надежно
+                parts = message.text.split("start=ref_")
+                if len(parts) > 1:
+                    ref_id_str = parts[1].split()[0] if parts[1].split() else parts[1].strip()
+                    ref_id = int(ref_id_str)
                     
-                    # Если это новый пользователь, даем ему бонус 10 звезд
-                    if was_new_user:
-                        db.add_balance(user_id, 10)
-                        bonus_given = True
-                    
-                    # Уведомляем реферера
-                    try:
-                        await message.bot.send_message(
-                            ref_id,
-                            f"🎉 <b>У вас новый реферал!</b>\n\n"
-                            f"👤 @{message.from_user.username or 'Пользователь'}\n\n"
-                            f"💡 Когда он пополнит баланс, вы получите 10% бонус!",
-                            parse_mode=ParseMode.HTML
-                        )
-                    except:
-                        pass
-            except:
-                pass
+                    if ref_id != user_id:  # Нельзя быть рефералом самому себе
+                        # Проверяем, не является ли пользователь уже рефералом этого реферера
+                        existing_referrals = db.get_referrals(ref_id)
+                        if user_id not in existing_referrals:
+                            # Добавляем реферала
+                            db.add_referral(ref_id, user_id)
+                            logger.info(f"Реферал добавлен: {ref_id} -> {user_id}")
+                            
+                            # Если это новый пользователь, даем ему бонус 10 звезд
+                            if was_new_user:
+                                db.add_balance(user_id, 10)
+                                bonus_given = True
+                                logger.info(f"Новому рефералу {user_id} начислен бонус 10 ⭐")
+                            
+                            # Уведомляем реферера
+                            try:
+                                await message.bot.send_message(
+                                    ref_id,
+                                    f"🎉 <b>У вас новый реферал!</b>\n\n"
+                                    f"👤 @{message.from_user.username or 'Пользователь'}\n\n"
+                                    f"💡 Когда он пополнит баланс, вы получите 10% бонус!",
+                                    parse_mode=ParseMode.HTML
+                                )
+                            except Exception as e:
+                                logger.warning(f"Не удалось уведомить реферера {ref_id}: {e}")
+                        else:
+                            logger.info(f"Пользователь {user_id} уже является рефералом {ref_id}")
+            except Exception as e:
+                logger.error(f"Ошибка обработки реферальной ссылки: {e}, text: {message.text}")
         
         # Пользователь подписан - показываем приветствие
         balance = db.get_balance(user_id)
@@ -630,28 +642,41 @@ async def process_check_subscription(callback: CallbackQuery):
             bonus_given = False
             if callback.message.text and "start=ref_" in callback.message.text:
                 try:
-                    ref_id = int(callback.message.text.split("start=ref_")[1].split()[0])
-                    if ref_id != user_id:  # Нельзя быть рефералом самому себе
-                        db.add_referral(ref_id, user_id)
+                    # Парсим реферальную ссылку более надежно
+                    parts = callback.message.text.split("start=ref_")
+                    if len(parts) > 1:
+                        ref_id_str = parts[1].split()[0] if parts[1].split() else parts[1].strip()
+                        ref_id = int(ref_id_str)
                         
-                        # Если это новый пользователь, даем ему бонус 10 звезд
-                        if was_new_user:
-                            db.add_balance(user_id, 10)
-                            bonus_given = True
-                        
-                        # Уведомляем реферера
-                        try:
-                            await callback.bot.send_message(
-                                ref_id,
-                                f"🎉 <b>У вас новый реферал!</b>\n\n"
-                                f"👤 @{callback.from_user.username or 'Пользователь'}\n\n"
-                                f"💡 Когда он пополнит баланс, вы получите 10% бонус!",
-                                parse_mode=ParseMode.HTML
-                            )
-                        except:
-                            pass
-                except:
-                    pass
+                        if ref_id != user_id:  # Нельзя быть рефералом самому себе
+                            # Проверяем, не является ли пользователь уже рефералом этого реферера
+                            existing_referrals = db.get_referrals(ref_id)
+                            if user_id not in existing_referrals:
+                                # Добавляем реферала
+                                db.add_referral(ref_id, user_id)
+                                logger.info(f"Реферал добавлен: {ref_id} -> {user_id}")
+                                
+                                # Если это новый пользователь, даем ему бонус 10 звезд
+                                if was_new_user:
+                                    db.add_balance(user_id, 10)
+                                    bonus_given = True
+                                    logger.info(f"Новому рефералу {user_id} начислен бонус 10 ⭐")
+                                
+                                # Уведомляем реферера
+                                try:
+                                    await callback.bot.send_message(
+                                        ref_id,
+                                        f"🎉 <b>У вас новый реферал!</b>\n\n"
+                                        f"👤 @{callback.from_user.username or 'Пользователь'}\n\n"
+                                        f"💡 Когда он пополнит баланс, вы получите 10% бонус!",
+                                        parse_mode=ParseMode.HTML
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"Не удалось уведомить реферера {ref_id}: {e}")
+                            else:
+                                logger.info(f"Пользователь {user_id} уже является рефералом {ref_id}")
+                except Exception as e:
+                    logger.error(f"Ошибка обработки реферальной ссылки: {e}, text: {callback.message.text}")
             
             balance = db.get_balance(user_id)
             bonus_text = "\n\n🎁 <b>Вам начислен приветственный бонус: 10 ⭐!</b>" if bonus_given else ""
@@ -2979,6 +3004,60 @@ async def admin_stats(callback: CallbackQuery):
     products = db.get_products()
     products_count = len(products)
     categories_count = len(db.get_categories())
+    all_users = db.get_all_users()
+    total_users = len(all_users)
+    
+    # Статистика по пользователям
+    users_with_balance = 0
+    users_with_orders = set()
+    total_balance = 0
+    new_today = 0
+    new_week = 0
+    active_week = set()
+    total_referrals = 0
+    
+    current_time = datetime.now()
+    today_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_ago = current_time - timedelta(days=7)
+    
+    # Собираем статистику по пользователям
+    for user_id in all_users:
+        user_id_str = str(user_id)
+        user_data = db.data.get("users", {}).get(user_id_str, {})
+        balance = user_data.get("balance", 0)
+        total_balance += balance
+        
+        if balance > 0:
+            users_with_balance += 1
+        
+        # Новые пользователи
+        registered_at = user_data.get("registered_at")
+        if registered_at:
+            try:
+                reg_date = datetime.fromisoformat(registered_at)
+                if reg_date >= today_start:
+                    new_today += 1
+                if reg_date >= week_ago:
+                    new_week += 1
+            except:
+                pass
+        
+        # Активные пользователи (с заказами за неделю)
+        orders = db.data.get("orders", [])
+        for order in orders:
+            if order.get("user_id") == user_id:
+                users_with_orders.add(user_id)
+                try:
+                    order_date = datetime.fromisoformat(order.get("date", ""))
+                    if order_date >= week_ago:
+                        active_week.add(user_id)
+                except:
+                    pass
+    
+    # Статистика по рефералам
+    referrals_data = db.data.get("referrals", {})
+    for ref_list in referrals_data.values():
+        total_referrals += len(ref_list)
     
     # Статистика по категориям
     category_stats = {}
@@ -2987,17 +3066,28 @@ async def admin_stats(callback: CallbackQuery):
         category_stats[cat] = category_stats.get(cat, 0) + 1
 
     text = (
-        f"📊 <b>Статистика</b>\n\n"
-        f"🛍 Товаров: {products_count}\n"
-        f"📁 Категорий: {categories_count}\n"
-        f"📦 Заказов: {stats['total_orders']}\n"
-        f"💰 Доход: {stats['total_revenue']} ⭐\n\n"
+        f"📊 <b>Статистика бота</b>\n\n"
+        f"<b>👥 Пользователи:</b>\n"
+        f"  • Всего: {total_users}\n"
+        f"  • Новых сегодня: {new_today}\n"
+        f"  • Новых за неделю: {new_week}\n"
+        f"  • С балансом: {users_with_balance}\n"
+        f"  • С покупками: {len(users_with_orders)}\n"
+        f"  • Активных (неделя): {len(active_week)}\n"
+        f"  • Всего рефералов: {total_referrals}\n\n"
+        f"<b>💰 Финансы:</b>\n"
+        f"  • Общий баланс: {total_balance} ⭐\n"
+        f"  • Доход: {stats['total_revenue']} ⭐\n\n"
+        f"<b>🛍 Товары:</b>\n"
+        f"  • Товаров: {products_count}\n"
+        f"  • Категорий: {categories_count}\n"
+        f"  • Заказов: {stats['total_orders']}\n"
     )
     
     if category_stats:
-        text += "<b>По категориям:</b>\n"
+        text += "\n<b>📁 По категориям:</b>\n"
         for cat, count in sorted(category_stats.items(), key=lambda x: x[1], reverse=True):
-            text += f"  {cat}: {count}\n"
+            text += f"  • {cat}: {count}\n"
 
     await callback.message.edit_text(
         text,
