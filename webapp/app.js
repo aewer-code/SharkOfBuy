@@ -44,7 +44,13 @@ async function init() {
 // Load products
 async function loadProducts() {
     try {
+        console.log('Loading products from:', `${API_URL}/api/products?user_id=${user.id}`);
         const response = await fetch(`${API_URL}/api/products?user_id=${user.id}`);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
         const data = await response.json();
         
         if (data.success) {
@@ -53,10 +59,18 @@ async function loadProducts() {
             
             renderCategories();
             renderProducts();
+        } else {
+            throw new Error(data.error || 'Unknown error');
         }
     } catch (error) {
         console.error('Error loading products:', error);
-        showError('Ошибка загрузки товаров');
+        document.getElementById('products-container').innerHTML = `
+            <div class="empty-state">
+                <h3>Ошибка загрузки</h3>
+                <p>${error.message}</p>
+            </div>
+        `;
+        showError('Ошибка загрузки товаров: ' + error.message);
     }
 }
 

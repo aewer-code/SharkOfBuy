@@ -40,16 +40,6 @@ def save_database(data):
         logger.error(f"Ошибка при сохранении БД: {e}")
         return False
 
-# Главная страница - веб-приложение
-@app.route('/')
-def index():
-    return send_from_directory('webapp', 'index.html')
-
-# Статические файлы
-@app.route('/<path:path>')
-def static_files(path):
-    return send_from_directory('webapp', path)
-
 # API: Получить список товаров
 @app.route('/api/products')
 def get_products():
@@ -212,7 +202,26 @@ def create_order():
 def health():
     return jsonify({'status': 'ok'})
 
+# Главная страница - веб-приложение
+@app.route('/')
+def index():
+    logger.info("Запрос главной страницы")
+    return send_from_directory('webapp', 'index.html')
+
+# Статические файлы (должен быть последним, чтобы не перехватывать API)
+@app.route('/<path:path>')
+def static_files(path):
+    # Проверяем, что это не API запрос
+    if path.startswith('api/'):
+        return jsonify({'error': 'Not found'}), 404
+    try:
+        return send_from_directory('webapp', path)
+    except Exception as e:
+        logger.error(f"Ошибка при отдаче статики {path}: {e}")
+        return jsonify({'error': 'File not found'}), 404
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+    logger.info(f"🌐 Запуск веб-сервера на порту {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
 
