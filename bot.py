@@ -757,7 +757,7 @@ async def process_topup_crypto(callback: CallbackQuery):
         await callback.message.edit_text(
             "💳 <b>Пополнение баланса через CryptoBot</b>\n\n"
             "Выберите сумму пополнения:\n\n"
-            "💡 <i>1 звезда = 0.01 USDT</i>",
+            "💡 <i>1 звезда ≈ 0.015 USDT</i>",
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML
         )
@@ -772,7 +772,8 @@ async def process_topup_crypto_amount(callback: CallbackQuery):
     """Создание инвойса CryptoBot для пополнения баланса"""
     try:
         amount = int(callback.data.replace("topup_crypto_", ""))
-        usdt_amount = amount * 0.01
+        # Конвертация: 50 звезд = $0.75, значит 1 звезда = $0.015
+        usdt_amount = amount * 0.015
         
         payload = f"topup_{amount}"
         invoice = await create_cryptobot_invoice(
@@ -1558,8 +1559,8 @@ async def process_pay_with_crypto(callback: CallbackQuery):
         
         total_price = product["price"] * quantity
         
-        # Конвертируем звезды в USDT (примерно 1 звезда = 0.01 USDT, можно настроить)
-        usdt_amount = total_price * 0.01
+        # Конвертация: 50 звезд = $0.75, значит 1 звезда = $0.015
+        usdt_amount = total_price * 0.015
         
         await callback.answer()
         
