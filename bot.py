@@ -74,6 +74,9 @@ class Database:
                     # Миграция: добавляем очередь ожидания
                     if "pending_orders" not in data:
                         data["pending_orders"] = []
+                    # Миграция: добавляем товары на модерации
+                    if "pending_products" not in data:
+                        data["pending_products"] = []
                     # Миграция: добавляем категорию к товарам если её нет
                     for product_id, product in data.get("products", {}).items():
                         if "category" not in product:
@@ -108,7 +111,8 @@ class Database:
             "referrals": {},  # Реферальная система: {user_id: [список рефералов]}
             "promo_codes": {},  # Промокоды: {code: {"discount": 10, "uses": 0, "max_uses": 100}}
             "users": {},  # Пользователи: {user_id: {"balance": 0, "username": "..."}}
-            "all_users": []  # Список всех user_id для рассылки
+            "all_users": [],  # Список всех user_id для рассылки
+            "pending_products": []  # Товары на модерации: [{"product_id": "...", "user_id": ..., ...}]
         }
 
     def save(self):
@@ -249,6 +253,45 @@ class Database:
 
     def get_stats(self):
         return self.data["stats"]
+    
+    def add_pending_product(self, product_data):
+        """Добавить товар на модерацию"""
+        if "pending_products" not in self.data:
+            self.data["pending_products"] = []
+        self.data["pending_products"].append(product_data)
+        self.save()
+        return product_data
+    
+    def get_pending_products(self):
+        """Получить все товары на модерации"""
+        return self.data.get("pending_products", [])
+    
+    def remove_pending_product(self, product_id):
+        """Удалить товар из очереди модерации"""
+        self.data["pending_products"] = [p for p in self.data.get("pending_products", []) 
+                                         if p.get("product_id") != product_id]
+        self.save()
+    
+    def approve_pending_product(self, product_id):
+        """Одобрить товар и добавить в каталог"""
+        pending = next((p for p in self.data.get("pending_products", []) 
+                       if p.get("product_id") == product_id), None)
+        if pending:
+            # Добавляем в каталог
+            self.add_product(
+                pending["product_id"],
+                pending["name"],
+                pending["description"],
+                pending["price"],
+                pending["material"],
+                pending.get("category", "Без категории"),
+                pending.get("delivery_type", "auto"),
+                pending.get("stock", None)
+            )
+            # Удаляем из очереди модерации
+            self.remove_pending_product(product_id)
+            return True
+        return False
 
     def set_start_message(self, text, media_type=None, media_id=None):
         self.data["start_message"] = {
@@ -388,6 +431,13 @@ class BuyStates(StatesGroup):
     waiting_quantity = State()
     waiting_message = State()
 
+class UserProductStates(StatesGroup):
+    waiting_product_name = State()
+    waiting_product_description = State()
+    waiting_product_price = State()
+    waiting_product_category = State()
+    waiting_product_material = State()
+
 class AdminStates(StatesGroup):
     waiting_product_name = State()
     waiting_product_description = State()
@@ -475,13 +525,17 @@ def get_admin_keyboard():
     pending_count = len(db.get_pending_orders())
     pending_text = f"⏳ Ожидают выдачи ({pending_count})" if pending_count > 0 else "⏳ Ожидают выдачи"
     
+    pending_products_count = len(db.get_pending_products())
+    pending_products_text = f"🔍 Товары на модерации ({pending_products_count})" if pending_products_count > 0 else "🔍 Товары на модерации"
+    
     keyboard = [
         [InlineKeyboardButton(text="➕ Добавить товар", callback_data="admin_add_product")],
         [InlineKeyboardButton(text="📋 Список товаров", callback_data="admin_list_products")],
         [InlineKeyboardButton(text="🎫 Промокоды", callback_data="admin_promo_codes")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="📦 Заказы", callback_data="admin_orders")],
-        [InlineKeyboardButton(text=pending_text, callback_data="admin_pending_orders")]
+        [InlineKeyboardButton(text=pending_text, callback_data="admin_pending_orders")],
+        [InlineKeyboardButton(text=pending_products_text, callback_data="admin_pending_products")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -752,7 +806,8 @@ async def cmd_profile(message: Message):
         [InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="topup_balance")],
         [InlineKeyboardButton(text="🎫 Активировать промокод", callback_data="activate_promo")],
         [InlineKeyboardButton(text="📜 Мои заказы", callback_data="my_orders")],
-        [InlineKeyboardButton(text="🎯 Реферальная программа", callback_data="referral_program")]
+        [InlineKeyboardButton(text="🎯 Реферальная программа", callback_data="referral_program")],
+        [InlineKeyboardButton(text="➕ Добавить товар", callback_data="user_add_product")]
     ])
     
     await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
@@ -930,7 +985,8 @@ async def back_to_profile(callback: CallbackQuery):
         [InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="topup_balance")],
         [InlineKeyboardButton(text="🎫 Активировать промокод", callback_data="activate_promo")],
         [InlineKeyboardButton(text="📜 Мои заказы", callback_data="my_orders")],
-        [InlineKeyboardButton(text="🎯 Реферальная программа", callback_data="referral_program")]
+        [InlineKeyboardButton(text="🎯 Реферальная программа", callback_data="referral_program")],
+        [InlineKeyboardButton(text="➕ Добавить товар", callback_data="user_add_product")]
     ])
     
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
@@ -960,6 +1016,361 @@ async def process_referral_program(callback: CallbackQuery):
     ])
     
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+
+# ============= ПОЛЬЗОВАТЕЛИ: ДОБАВЛЕНИЕ ТОВАРА =============
+@router.callback_query(F.data == "user_add_product")
+async def user_add_product_start(callback: CallbackQuery, state: FSMContext):
+    """Начало добавления товара пользователем"""
+    # Показываем предупреждение о запрещенных товарах
+    warning_text = (
+        "⚠️ <b>Внимание!</b>\n\n"
+        "<b>Запрещено выставлять:</b>\n"
+        "❌ 18+ материалы\n"
+        "❌ Базы данных\n"
+        "❌ Краденые аккаунты\n\n"
+        "Товар будет проверен администратором перед публикацией.\n\n"
+        "Продолжить?"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Продолжить", callback_data="user_add_product_confirm")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_profile")]
+    ])
+    
+    await callback.message.edit_text(warning_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "user_add_product_confirm")
+async def user_add_product_confirm(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение добавления товара"""
+    await callback.message.edit_text(
+        "📝 <b>Добавление товара</b>\n\n"
+        "Введите название товара:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_profile")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(UserProductStates.waiting_product_name)
+    await callback.answer()
+
+
+@router.message(UserProductStates.waiting_product_name)
+async def user_product_name(message: Message, state: FSMContext):
+    """Обработка названия товара от пользователя"""
+    await state.update_data(name=message.text)
+    await message.answer(
+        "📝 Введите описание товара:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
+        ])
+    )
+    await state.set_state(UserProductStates.waiting_product_description)
+
+
+@router.message(UserProductStates.waiting_product_description)
+async def user_product_description(message: Message, state: FSMContext):
+    """Обработка описания товара от пользователя"""
+    await state.update_data(description=message.text)
+    await message.answer(
+        "💰 Введите цену в звездах (целое число, минимум 1):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
+        ])
+    )
+    await state.set_state(UserProductStates.waiting_product_price)
+
+
+@router.message(UserProductStates.waiting_product_price)
+async def user_product_price(message: Message, state: FSMContext):
+    """Обработка цены товара от пользователя"""
+    try:
+        price = int(message.text)
+        if price < 1:
+            await message.answer("❌ Цена должна быть минимум 1 ⭐! Введите корректную цену:")
+            return
+    except ValueError:
+        await message.answer("❌ Введите корректную цену (целое число, минимум 1)!")
+        return
+    
+    await state.update_data(price=price)
+    
+    # Получаем категории
+    categories = db.get_categories()
+    keyboard = []
+    for cat in list(categories.keys())[:3]:  # Максимум 3 в ряд
+        keyboard.append([InlineKeyboardButton(text=f"📁 {cat}", callback_data=f"user_select_cat_{cat}")])
+    keyboard.append([InlineKeyboardButton(text="⏭ Пропустить", callback_data="user_skip_category")])
+    keyboard.append([InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")])
+    
+    await message.answer(
+        "📁 <b>Выберите категорию товара:</b>\n\n"
+        "Или пропустите этот шаг",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(UserProductStates.waiting_product_category)
+
+
+@router.callback_query(F.data.startswith("user_select_cat_"))
+async def user_select_category(callback: CallbackQuery, state: FSMContext):
+    """Выбор категории пользователем"""
+    category = callback.data.replace("user_select_cat_", "")
+    await state.update_data(category=category)
+    
+    await callback.message.edit_text(
+        "📦 <b>Отправьте материал товара:</b>\n\n"
+        "Вы можете отправить:\n"
+        "• Текст\n"
+        "• Фото\n"
+        "• Видео\n\n"
+        "Этот материал будет выдан покупателю после оплаты.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(UserProductStates.waiting_product_material)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "user_skip_category")
+async def user_skip_category(callback: CallbackQuery, state: FSMContext):
+    """Пропуск категории"""
+    await state.update_data(category="Без категории")
+    
+    await callback.message.edit_text(
+        "📦 <b>Отправьте материал товара:</b>\n\n"
+        "Вы можете отправить:\n"
+        "• Текст\n"
+        "• Фото\n"
+        "• Видео\n\n"
+        "Этот материал будет выдан покупателю после оплаты.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="user_cancel_product")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(UserProductStates.waiting_product_material)
+    await callback.answer()
+
+
+@router.message(UserProductStates.waiting_product_material)
+async def user_product_material(message: Message, state: FSMContext):
+    """Обработка материала товара от пользователя"""
+    material = {}
+    
+    if message.text:
+        material = {"type": "text", "content": message.text}
+    elif message.photo:
+        material = {"type": "photo", "file_id": message.photo[-1].file_id}
+    elif message.video:
+        material = {"type": "video", "file_id": message.video.file_id}
+    else:
+        await message.answer("❌ Отправьте текст, фото или видео!")
+        return
+    
+    data = await state.get_data()
+    product_id = f"user_prod_{int(time.time())}_{message.from_user.id}"
+    
+    # Сохраняем товар на модерацию
+    pending_product = {
+        "product_id": product_id,
+        "user_id": message.from_user.id,
+        "username": message.from_user.username or "Без username",
+        "name": data["name"],
+        "description": data["description"],
+        "price": data["price"],
+        "category": data.get("category", "Без категории"),
+        "material": material,
+        "delivery_type": "auto",  # Всегда автоматическая выдача для пользователей
+        "stock": None,  # Безлимитный для пользователей
+        "created_at": datetime.now().isoformat(),
+        "status": "pending"
+    }
+    
+    db.add_pending_product(pending_product)
+    
+    # Уведомляем пользователя
+    await message.answer(
+        f"✅ <b>Товар отправлен на модерацию!</b>\n\n"
+        f"Название: {data['name']}\n"
+        f"Описание: {data['description']}\n"
+        f"Цена: {data['price']} ⭐\n"
+        f"Категория: {data.get('category', 'Без категории')}\n\n"
+        f"⏳ Товар будет проверен администратором и добавлен в каталог после одобрения.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ В профиль", callback_data="back_to_profile")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Уведомляем админов
+    for admin_id in ADMIN_IDS:
+        try:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_product_{product_id}")],
+                [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_product_{product_id}")]
+            ])
+            
+            await message.bot.send_message(
+                admin_id,
+                f"🔔 <b>Новый товар на модерации</b>\n\n"
+                f"👤 От: @{message.from_user.username or message.from_user.id} (ID: {message.from_user.id})\n\n"
+                f"📝 Название: {data['name']}\n"
+                f"📄 Описание: {data['description']}\n"
+                f"💰 Цена: {data['price']} ⭐\n"
+                f"📁 Категория: {data.get('category', 'Без категории')}\n"
+                f"📦 Материал: {'Текст' if material['type'] == 'text' else material['type'].capitalize()}\n\n"
+                f"ID товара: <code>{product_id}</code>",
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Ошибка уведомления админа {admin_id}: {e}")
+    
+    logger.info(f"Пользователь {message.from_user.id} добавил товар на модерацию: {product_id}")
+    await state.clear()
+
+
+@router.callback_query(F.data == "user_cancel_product")
+async def user_cancel_product(callback: CallbackQuery, state: FSMContext):
+    """Отмена добавления товара"""
+    await state.clear()
+    await callback.message.edit_text(
+        "❌ Добавление товара отменено",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ В профиль", callback_data="back_to_profile")]
+        ])
+    )
+    await callback.answer()
+
+
+# ============= АДМИН: МОДЕРАЦИЯ ТОВАРОВ =============
+@router.callback_query(F.data.startswith("approve_product_"))
+async def admin_approve_product(callback: CallbackQuery):
+    """Одобрение товара администратором"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа!", show_alert=True)
+        return
+    
+    product_id = callback.data.replace("approve_product_", "")
+    
+    if db.approve_pending_product(product_id):
+        await callback.message.edit_text(
+            f"✅ <b>Товар одобрен и добавлен в каталог!</b>\n\n"
+            f"ID: <code>{product_id}</code>",
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Уведомляем пользователя
+        pending = next((p for p in db.data.get("pending_products", []) 
+                       if p.get("product_id") == product_id), None)
+        if pending:
+            try:
+                await callback.bot.send_message(
+                    pending["user_id"],
+                    f"✅ <b>Ваш товар одобрен!</b>\n\n"
+                    f"Товар <b>\"{pending['name']}\"</b> был одобрен администратором и добавлен в каталог.\n\n"
+                    f"Теперь его могут покупать другие пользователи!",
+                    parse_mode=ParseMode.HTML
+                )
+            except:
+                pass
+        
+        logger.info(f"Админ {callback.from_user.id} одобрил товар {product_id}")
+    else:
+        await callback.answer("❌ Товар не найден!", show_alert=True)
+    
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("reject_product_"))
+async def admin_reject_product(callback: CallbackQuery):
+    """Отклонение товара администратором"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа!", show_alert=True)
+        return
+    
+    product_id = callback.data.replace("reject_product_", "")
+    pending = next((p for p in db.data.get("pending_products", []) 
+                   if p.get("product_id") == product_id), None)
+    
+    if pending:
+        db.remove_pending_product(product_id)
+        await callback.message.edit_text(
+            f"❌ <b>Товар отклонен</b>\n\n"
+            f"ID: <code>{product_id}</code>",
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Уведомляем пользователя
+        try:
+            await callback.bot.send_message(
+                pending["user_id"],
+                f"❌ <b>Ваш товар отклонен</b>\n\n"
+                f"Товар <b>\"{pending['name']}\"</b> был отклонен администратором.\n\n"
+                f"Возможные причины:\n"
+                f"• Нарушение правил (18+, базы данных, краденые аккаунты)\n"
+                f"• Некорректное описание\n"
+                f"• Другая причина",
+                parse_mode=ParseMode.HTML
+            )
+        except:
+            pass
+        
+        logger.info(f"Админ {callback.from_user.id} отклонил товар {product_id}")
+    else:
+        await callback.answer("❌ Товар не найден!", show_alert=True)
+    
+    await callback.answer()
+
+
+# ============= АДМИН: ТОВАРЫ НА МОДЕРАЦИИ =============
+@router.callback_query(F.data == "admin_pending_products")
+async def admin_pending_products(callback: CallbackQuery):
+    """Просмотр товаров на модерации"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа!", show_alert=True)
+        return
+    
+    pending = db.get_pending_products()
+    if not pending:
+        await callback.message.edit_text(
+            "🔍 <b>Нет товаров на модерации</b>\n\n"
+            "Все товары обработаны!",
+            reply_markup=get_admin_keyboard(),
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer()
+        return
+    
+    text = f"🔍 <b>Товары на модерации:</b> {len(pending)}\n\n"
+    keyboard = []
+    
+    for product in pending:
+        date = datetime.fromisoformat(product.get("created_at", datetime.now().isoformat())).strftime("%d.%m.%Y %H:%M")
+        text += (
+            f"📝 <b>{product['name']}</b>\n"
+            f"💰 {product['price']} ⭐\n"
+            f"👤 @{product['username']} (ID: {product['user_id']})\n"
+            f"📅 {date}\n\n"
+        )
+        keyboard.append([
+            InlineKeyboardButton(text=f"✅ Одобрить", callback_data=f"approve_product_{product['product_id']}"),
+            InlineKeyboardButton(text=f"❌ Отклонить", callback_data=f"reject_product_{product['product_id']}")
+        ])
+    
+    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_back")])
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        parse_mode=ParseMode.HTML
+    )
     await callback.answer()
 
 
@@ -3468,11 +3879,11 @@ async def admin_promo_uses_input(message: Message, state: FSMContext):
 )
 async def process_buy_message(message: Message, state: FSMContext):
     """Обработка сообщения после оплаты"""
-    # Проверяем, не находится ли пользователь в состоянии админ-панели
-    # Админские обработчики имеют приоритет, но на всякий случай проверяем
+    # Проверяем, не находится ли пользователь в состоянии админ-панели или добавления товара
+    # Админские и пользовательские обработчики имеют приоритет
     current_state = await state.get_state()
-    if current_state and current_state.startswith("AdminStates"):
-        return  # Не обрабатываем, если пользователь в админ-панели
+    if current_state and (current_state.startswith("AdminStates") or current_state.startswith("UserProductStates")):
+        return  # Не обрабатываем, если пользователь в админ-панели или добавляет товар
     
     user_id = str(message.from_user.id)
     
