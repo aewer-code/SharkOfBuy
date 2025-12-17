@@ -405,6 +405,7 @@ class AdminStates(StatesGroup):
     waiting_create_promo_code = State()
     waiting_create_promo_amount = State()
     waiting_create_promo_uses = State()
+    waiting_broadcast_button = State()
 
 
 # ============= КЛАВИАТУРЫ =============
@@ -1093,18 +1094,48 @@ async def cmd_send(message: Message):
         await message.answer("❌ Нет пользователей для рассылки!")
         return
     
-    # Подтверждение рассылки
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Да, отправить", callback_data=f"broadcast_confirm")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast_cancel")]
-    ])
-    
     # Сохраняем текст рассылки временно
     if not hasattr(message.bot, "_broadcast_text"):
         message.bot._broadcast_text = {}
+    if not hasattr(message.bot, "_broadcast_button"):
+        message.bot._broadcast_button = {}
+    
     message.bot._broadcast_text[message.from_user.id] = text
+    message.bot._broadcast_button[message.from_user.id] = None  # Пока кнопки нет
+    
+    # Спрашиваем, нужно ли добавить кнопку
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да", callback_data="broadcast_add_button")],
+        [InlineKeyboardButton(text="❌ Нет", callback_data="broadcast_no_button")]
+    ])
     
     await message.answer(
+        f"📢 <b>Рассылка сообщения</b>\n\n"
+        f"Сообщение будет отправлено <b>{len(all_users)}</b> пользователям:\n\n"
+        f"<i>{text[:200]}{'...' if len(text) > 200 else ''}</i>\n\n"
+        f"Добавить к сообщению кнопку?",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
+
+
+@router.callback_query(F.data == "broadcast_no_button")
+async def process_broadcast_no_button(callback: CallbackQuery):
+    """Рассылка без кнопки - сразу подтверждение"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа!", show_alert=True)
+        return
+    
+    # Показываем подтверждение
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да, отправить", callback_data="broadcast_confirm")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast_cancel")]
+    ])
+    
+    text = callback.bot._broadcast_text.get(callback.from_user.id, "")
+    all_users = db.get_all_users()
+    
+    await callback.message.edit_text(
         f"📢 <b>Подтверждение рассылки</b>\n\n"
         f"Сообщение будет отправлено <b>{len(all_users)}</b> пользователям:\n\n"
         f"<i>{text[:200]}{'...' if len(text) > 200 else ''}</i>\n\n"
@@ -1112,6 +1143,98 @@ async def cmd_send(message: Message):
         reply_markup=keyboard,
         parse_mode=ParseMode.HTML
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "broadcast_add_button")
+async def process_broadcast_add_button(callback: CallbackQuery, state: FSMContext):
+    """Запрос данных кнопки для рассылки"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа!", show_alert=True)
+        return
+    
+    await callback.message.edit_text(
+        "🔘 <b>Добавление кнопки</b>\n\n"
+        "Напишите текст кнопки и ссылку в формате:\n"
+        "<code>текст - ссылка</code>\n\n"
+        "Пример:\n"
+        "<code>канал - sharkbuys.t.me</code>\n\n"
+        "Или:\n"
+        "<code>Перейти - https://t.me/sharkbuys</code>",
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(AdminStates.waiting_broadcast_button)
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_broadcast_button)
+async def process_broadcast_button_input(message: Message, state: FSMContext):
+    """Обработка ввода текста кнопки и ссылки"""
+    if not is_admin(message.from_user.id):
+        await state.clear()
+        return
+    
+    try:
+        # Парсим формат "текст - ссылка"
+        input_text = message.text.strip()
+        if " - " not in input_text:
+            await message.answer(
+                "❌ <b>Неверный формат!</b>\n\n"
+                "Используйте формат: <code>текст - ссылка</code>\n\n"
+                "Пример: <code>канал - sharkbuys.t.me</code>",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        
+        parts = input_text.split(" - ", 1)
+        button_text = parts[0].strip()
+        button_url = parts[1].strip()
+        
+        if not button_text or not button_url:
+            await message.answer("❌ Текст кнопки и ссылка не могут быть пустыми!")
+            return
+        
+        # Нормализуем ссылку (добавляем https:// если нужно)
+        if not button_url.startswith(("http://", "https://", "t.me/", "@")):
+            if button_url.startswith("sharkbuys.t.me") or "." in button_url:
+                button_url = f"https://{button_url}"
+            else:
+                # Если это просто username без @, добавляем t.me/
+                button_url = f"https://t.me/{button_url.replace('@', '')}"
+        
+        # Сохраняем данные кнопки
+        if not hasattr(message.bot, "_broadcast_button"):
+            message.bot._broadcast_button = {}
+        message.bot._broadcast_button[message.from_user.id] = {
+            "text": button_text,
+            "url": button_url
+        }
+        
+        await state.clear()
+        
+        # Показываем подтверждение
+        text = message.bot._broadcast_text.get(message.from_user.id, "")
+        all_users = db.get_all_users()
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, отправить", callback_data="broadcast_confirm")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast_cancel")]
+        ])
+        
+        await message.answer(
+            f"📢 <b>Подтверждение рассылки</b>\n\n"
+            f"Сообщение будет отправлено <b>{len(all_users)}</b> пользователям:\n\n"
+            f"<i>{text[:200]}{'...' if len(text) > 200 else ''}</i>\n\n"
+            f"🔘 Кнопка: <b>{button_text}</b> → {button_url}\n\n"
+            f"Вы уверены?",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка обработки кнопки рассылки: {e}")
+        await message.answer("❌ Ошибка! Попробуйте еще раз.")
+        await state.clear()
 
 
 @router.callback_query(F.data == "broadcast_confirm")
@@ -1127,23 +1250,42 @@ async def process_broadcast_confirm(callback: CallbackQuery):
         await callback.answer("❌ Текст рассылки не найден!", show_alert=True)
         return
     
+    # Получаем данные кнопки (если есть)
+    button_data = callback.bot._broadcast_button.get(callback.from_user.id)
+    
     await callback.message.edit_text("📤 <b>Рассылка началась...</b>", parse_mode=ParseMode.HTML)
     
     all_users = db.get_all_users()
     success = 0
     failed = 0
     
+    # Создаем клавиатуру с кнопкой (если есть)
+    reply_markup = None
+    if button_data:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=button_data["text"], url=button_data["url"])]
+        ])
+        reply_markup = keyboard
+    
     for user_id in all_users:
         try:
-            await callback.bot.send_message(user_id, text, parse_mode=ParseMode.HTML)
+            await callback.bot.send_message(
+                user_id, 
+                text, 
+                parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup
+            )
             success += 1
             await asyncio.sleep(0.05)  # Задержка для избежания flood control
         except Exception as e:
             failed += 1
             logger.error(f"Ошибка рассылки пользователю {user_id}: {e}")
     
-    # Удаляем сохраненный текст
-    del callback.bot._broadcast_text[callback.from_user.id]
+    # Удаляем сохраненные данные
+    if callback.from_user.id in callback.bot._broadcast_text:
+        del callback.bot._broadcast_text[callback.from_user.id]
+    if callback.from_user.id in callback.bot._broadcast_button:
+        del callback.bot._broadcast_button[callback.from_user.id]
     
     await callback.message.edit_text(
         f"✅ <b>Рассылка завершена!</b>\n\n"
@@ -1159,8 +1301,10 @@ async def process_broadcast_confirm(callback: CallbackQuery):
 @router.callback_query(F.data == "broadcast_cancel")
 async def process_broadcast_cancel(callback: CallbackQuery):
     """Отмена рассылки"""
-    if callback.bot._broadcast_text and callback.from_user.id in callback.bot._broadcast_text:
+    if hasattr(callback.bot, "_broadcast_text") and callback.from_user.id in callback.bot._broadcast_text:
         del callback.bot._broadcast_text[callback.from_user.id]
+    if hasattr(callback.bot, "_broadcast_button") and callback.from_user.id in callback.bot._broadcast_button:
+        del callback.bot._broadcast_button[callback.from_user.id]
     
     await callback.message.edit_text("❌ Рассылка отменена", parse_mode=ParseMode.HTML)
     await callback.answer()
