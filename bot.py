@@ -13,7 +13,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    LabeledPrice, PreCheckoutQuery, ContentType, ReplyKeyboardMarkup, KeyboardButton
+    LabeledPrice, PreCheckoutQuery, ContentType, ReplyKeyboardMarkup, KeyboardButton,
+    BotCommand
 )
 from aiogram.enums import ChatMemberStatus
 from aiogram.client.default import DefaultBotProperties
@@ -185,13 +186,14 @@ class Database:
     def get_user_orders(self, user_id):
         return [order for order in self.data["orders"] if order["user_id"] == user_id]
 
-    def add_order(self, user_id, username, product_id, product_name, price, status="completed"):
+    def add_order(self, user_id, username, product_id, product_name, price, status="completed", quantity=1):
         order = {
             "user_id": user_id,
             "username": username,
             "product_id": product_id,
             "product_name": product_name,
             "price": price,
+            "quantity": quantity,
             "status": status,  # "completed" или "pending"
             "date": datetime.now().isoformat()
         }
@@ -201,7 +203,7 @@ class Database:
         self.save()
         return order
 
-    def add_pending_order(self, user_id, username, product_id, product_name, price):
+    def add_pending_order(self, user_id, username, product_id, product_name, price, quantity=1):
         """Добавить заказ в очередь ожидания ручной выдачи"""
         pending = {
             "order_id": f"ord_{int(time.time())}_{user_id}",
@@ -210,6 +212,7 @@ class Database:
             "product_id": product_id,
             "product_name": product_name,
             "price": price,
+            "quantity": quantity,
             "date": datetime.now().isoformat()
         }
         self.data.setdefault("pending_orders", []).append(pending)
@@ -374,6 +377,10 @@ db = Database()
 
 
 # ============= FSM СОСТОЯНИЯ =============
+class BuyStates(StatesGroup):
+    waiting_quantity = State()
+    waiting_message = State()
+
 class AdminStates(StatesGroup):
     waiting_product_name = State()
     waiting_product_description = State()
@@ -542,22 +549,22 @@ async def cmd_start(message: Message):
         # Пользователь подписан - показываем приветствие
         balance = db.get_balance(user_id)
         welcome_text = (
-            "![🤟](tg://emoji?id=5298505616099149456) *Добро пожаловать в Shark Of Buy!*\n"
-            "*Быстро • Надежно • Безопасно*\n\n"
-            f"![😶‍🌫️](tg://emoji?id=5305729501982919477) *Баланс:* {balance} ![⭐️](tg://emoji?id=5321485469249198987)\n\n"
-            "*Доступные команды:*\n"
+            "🎉 <b>Добро пожаловать в Shark Of Buy!</b>\n\n"
+            "<i>Быстро • Надежно • Безопасно</i>\n\n"
+            f"💰 <b>Баланс:</b> {balance} ⭐\n\n"
+            "<b>Доступные команды:</b>\n"
             "/buy - Каталог товаров\n"
             "/profile - Личный кабинет\n"
             "/myorders - Мои заказы\n"
             "/referral - Реферальная программа\n"
             "/help - Справка\n\n"
-            f"*Создатель:* {BOT_CREATOR}"
+            f"<b>Создатель:</b> {BOT_CREATOR}"
         )
         
         await message.answer(
             welcome_text,
             reply_markup=get_main_reply_keyboard(),
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.HTML
         )
         logger.info(f"Пользователь {user_id} использовал /start")
         
@@ -874,7 +881,7 @@ async def cmd_referral(message: Message):
 @router.message(Command("admin"))
 async def cmd_admin(message: Message):
     if not is_admin(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к админ-панели!")
+        # Не отвечаем не-админам
         logger.warning(f"Попытка доступа к админ-панели от {message.from_user.id}")
         return
 
@@ -1025,19 +1032,20 @@ async def process_buy(callback: CallbackQuery):
             )
             return
 
-        # Проверяем баланс пользователя
-        user_balance = db.get_balance(callback.from_user.id)
-        
-        # Выбор способа оплаты
+        # Сначала спрашиваем количество
+        max_quantity = stock if stock is not None else 10  # Максимум 10 или остаток
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"💰 Баланс ({user_balance} ⭐)", callback_data=f"pay_balance_{product_id}")],
-            [InlineKeyboardButton(text="⭐ Telegram Stars", callback_data=f"pay_stars_{product_id}")]
+            [InlineKeyboardButton(text="1 шт.", callback_data=f"qty_{product_id}_1"),
+             InlineKeyboardButton(text="2 шт.", callback_data=f"qty_{product_id}_2"),
+             InlineKeyboardButton(text="3 шт.", callback_data=f"qty_{product_id}_3")],
+            [InlineKeyboardButton(text="5 шт.", callback_data=f"qty_{product_id}_5"),
+             InlineKeyboardButton(text="10 шт.", callback_data=f"qty_{product_id}_10")],
         ])
         
         await callback.message.answer(
             f"🛍 <b>{product['name']}</b>\n\n"
-            f"💰 Цена: {product['price']} ⭐\n\n"
-            "Выберите способ оплаты:",
+            f"💰 Цена за 1 шт.: {product['price']} ⭐\n\n"
+            "Выберите количество:",
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML
         )
@@ -1046,11 +1054,58 @@ async def process_buy(callback: CallbackQuery):
         await callback.message.answer(f"❌ Ошибка: {str(e)}")
 
 
+@router.callback_query(F.data.startswith("qty_"))
+async def process_quantity(callback: CallbackQuery):
+    """Обработка выбора количества"""
+    try:
+        parts = callback.data.replace("qty_", "").split("_")
+        product_id = parts[0]
+        quantity = int(parts[1])
+        
+        product = db.get_product(product_id)
+        if not product:
+            await callback.answer("❌ Товар не найден!", show_alert=True)
+            return
+        
+        # Проверка остатка
+        stock = product.get("stock")
+        if stock is not None and stock < quantity:
+            await callback.answer(f"❌ Недостаточно товара! В наличии: {stock} шт.", show_alert=True)
+            return
+        
+        await callback.answer()
+        
+        user_balance = db.get_balance(callback.from_user.id)
+        total_price = product["price"] * quantity
+        
+        # Сохраняем количество в callback data для дальнейшей обработки
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"💰 Баланс ({user_balance} ⭐)", callback_data=f"pay_balance_{product_id}_{quantity}")],
+            [InlineKeyboardButton(text="⭐ Telegram Stars", callback_data=f"pay_stars_{product_id}_{quantity}")]
+        ])
+        
+        await callback.message.answer(
+            f"🛍 <b>{product['name']}</b>\n\n"
+            f"📦 Количество: {quantity} шт.\n"
+            f"💰 Цена за 1 шт.: {product['price']} ⭐\n"
+            f"💵 <b>Итого: {total_price} ⭐</b>\n\n"
+            "Выберите способ оплаты:",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при выборе количества: {e}")
+        await callback.answer("❌ Ошибка!", show_alert=True)
+
+
 @router.callback_query(F.data.startswith("pay_balance_"))
 async def process_pay_with_balance(callback: CallbackQuery):
     """Оплата товара балансом"""
     try:
-        product_id = callback.data.replace("pay_balance_", "")
+        parts = callback.data.replace("pay_balance_", "").split("_")
+        product_id = parts[0]
+        quantity = int(parts[1]) if len(parts) > 1 else 1
+        
         product = db.get_product(product_id)
         
         if not product:
@@ -1059,7 +1114,7 @@ async def process_pay_with_balance(callback: CallbackQuery):
         
         user_id = callback.from_user.id
         balance = db.get_balance(user_id)
-        price = product["price"]
+        price = product["price"] * quantity
         
         if balance < price:
             await callback.answer(
@@ -1084,11 +1139,24 @@ async def process_pay_with_balance(callback: CallbackQuery):
         await callback.message.answer(
             f"✅ <b>Спасибо за покупку!</b>\n\n"
             f"Товар: {product['name']}\n"
+            f"Количество: {quantity} шт.\n"
             f"Цена: {price} ⭐\n"
             f"Списано с баланса: {price} ⭐\n"
-            f"Остаток: {db.get_balance(user_id)} ⭐",
+            f"Остаток: {db.get_balance(user_id)} ⭐\n\n"
+            "💬 Хотите оставить сообщение к заказу? (Напишите сообщение или отправьте /skip)",
             parse_mode=ParseMode.HTML
         )
+        
+        # Сохраняем данные для запроса сообщения в БД (временное решение)
+        if "buy_messages" not in db.data:
+            db.data["buy_messages"] = {}
+        db.data["buy_messages"][str(user_id)] = {
+            "product_id": product_id,
+            "quantity": quantity,
+            "price": price,
+            "payment_type": "balance"
+        }
+        db.save()
         
         if delivery_type == "manual":
             # Ручная выдача
@@ -1097,7 +1165,8 @@ async def process_pay_with_balance(callback: CallbackQuery):
                 callback.from_user.username or "Без username",
                 product_id,
                 product["name"],
-                price
+                price,
+                quantity=quantity
             )
             
             await callback.message.answer(
@@ -1115,6 +1184,7 @@ async def process_pay_with_balance(callback: CallbackQuery):
                         admin_id,
                         f"🔔 <b>Новый заказ (оплата балансом)!</b>\n\n"
                         f"Товар: {product['name']}\n"
+                        f"Количество: {quantity} шт.\n"
                         f"Цена: {price} ⭐\n"
                         f"Покупатель: @{callback.from_user.username or callback.from_user.id}",
                         parse_mode=ParseMode.HTML,
@@ -1124,18 +1194,20 @@ async def process_pay_with_balance(callback: CallbackQuery):
                     pass
             
             db.add_order(user_id, callback.from_user.username or "Без username",
-                        product_id, product["name"], price, status="pending")
+                        product_id, product["name"], price, status="pending", quantity=quantity)
         else:
-            # Автоматическая выдача
+            # Автоматическая выдача - выдаем quantity раз
             material = product["material"]
-            if material["type"] == "text":
-                await callback.message.answer(f"📄 <b>Ваш материал:</b>\n\n{material['content']}", parse_mode=ParseMode.HTML)
-            elif material["type"] == "file":
-                await callback.message.answer_document(document=material["file_id"], caption="📄 Ваш материал")
-            elif material["type"] == "photo":
-                await callback.message.answer_photo(photo=material["file_id"], caption="📄 Ваш материал")
-            elif material["type"] == "video":
-                await callback.message.answer_video(video=material["file_id"], caption="📄 Ваш материал")
+            for i in range(quantity):
+                if material["type"] == "text":
+                    await callback.message.answer(f"📄 <b>Ваш материал ({i+1}/{quantity}):</b>\n\n{material['content']}", parse_mode=ParseMode.HTML)
+                elif material["type"] == "file":
+                    await callback.message.answer_document(document=material["file_id"], caption=f"📄 Ваш материал ({i+1}/{quantity})")
+                elif material["type"] == "photo":
+                    await callback.message.answer_photo(photo=material["file_id"], caption=f"📄 Ваш материал ({i+1}/{quantity})")
+                elif material["type"] == "video":
+                    await callback.message.answer_video(video=material["file_id"], caption=f"📄 Ваш материал ({i+1}/{quantity})")
+                await asyncio.sleep(0.5)  # Небольшая задержка между выдачами
             
             for admin_id in ADMIN_IDS:
                 try:
@@ -1143,6 +1215,7 @@ async def process_pay_with_balance(callback: CallbackQuery):
                         admin_id,
                         f"💰 <b>Продажа (баланс)!</b>\n\n"
                         f"Товар: {product['name']}\n"
+                        f"Количество: {quantity} шт.\n"
                         f"Цена: {price} ⭐\n"
                         f"Покупатель: @{callback.from_user.username or callback.from_user.id}",
                         parse_mode=ParseMode.HTML
@@ -1151,10 +1224,11 @@ async def process_pay_with_balance(callback: CallbackQuery):
                     pass
             
             db.add_order(user_id, callback.from_user.username or "Без username",
-                        product_id, product["name"], price, status="completed")
+                        product_id, product["name"], price, status="completed", quantity=quantity)
         
-        # Уменьшаем остаток
-        db.decrease_stock(product_id)
+        # Уменьшаем остаток на quantity
+        for _ in range(quantity):
+            db.decrease_stock(product_id)
         logger.info(f"Товар {product_id} куплен за баланс пользователем {user_id}")
         
     except Exception as e:
@@ -1166,20 +1240,29 @@ async def process_pay_with_balance(callback: CallbackQuery):
 async def process_pay_with_stars(callback: CallbackQuery):
     """Оплата товара Telegram Stars"""
     try:
-        product_id = callback.data.replace("pay_stars_", "")
+        parts = callback.data.replace("pay_stars_", "").split("_")
+        product_id = parts[0]
+        quantity = int(parts[1]) if len(parts) > 1 else 1
+        
         product = db.get_product(product_id)
         
         if not product:
             await callback.answer("❌ Товар не найден!", show_alert=True)
             return
         
-        price = max(1, product["price"])
-        prices = [LabeledPrice(label=product["name"], amount=price)]
+        # Проверка остатка
+        stock = product.get("stock")
+        if stock is not None and stock < quantity:
+            await callback.answer(f"❌ Недостаточно товара! В наличии: {stock} шт.", show_alert=True)
+            return
+        
+        total_price = max(1, product["price"] * quantity)
+        prices = [LabeledPrice(label=f"{product['name']} x{quantity}", amount=total_price)]
 
         await callback.message.answer_invoice(
-            title=product["name"],
+            title=f"{product['name']} x{quantity}",
             description=product["description"],
-            payload=f"product_{product_id}",
+            payload=f"product_{product_id}_{quantity}",
             provider_token="",
             currency="XTR",
             prices=prices
@@ -1247,8 +1330,9 @@ async def process_get_free(callback: CallbackQuery):
                     pass
 
             db.add_order(callback.from_user.id, callback.from_user.username or "Без username",
-                        product_id, product["name"], 0, status="pending")
+                        product_id, product["name"], 0, status="pending", quantity=1)
         else:
+            # Автоматическая выдача бесплатного товара
             material = product["material"]
             if material["type"] == "text":
                 await callback.message.answer(f"📄 <b>Ваш материал:</b>\n\n{material['content']}", parse_mode=ParseMode.HTML)
@@ -1260,7 +1344,7 @@ async def process_get_free(callback: CallbackQuery):
                 await callback.message.answer_video(video=material["file_id"], caption="📄 Ваш материал")
 
             db.add_order(callback.from_user.id, callback.from_user.username or "Без username",
-                        product_id, product["name"], 0, status="completed")
+                        product_id, product["name"], 0, status="completed", quantity=1)
 
         db.decrease_stock(product_id)
         logger.info(f"Бесплатный товар {product_id} выдан {callback.from_user.id}")
@@ -1320,7 +1404,10 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
     """
     try:
         # Проверяем наличие товара
-        product_id = pre_checkout_query.invoice_payload.replace("product_", "")
+        parts = pre_checkout_query.invoice_payload.replace("product_", "").split("_")
+        product_id = parts[0]
+        quantity = int(parts[1]) if len(parts) > 1 else 1
+        
         product = db.get_product(product_id)
         
         if not product:
@@ -1333,12 +1420,12 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
         
         # Проверяем остаток
         stock = product.get("stock")
-        if stock is not None and stock <= 0:
+        if stock is not None and stock < quantity:
             await pre_checkout_query.answer(
                 ok=False,
-                error_message="❌ Товар закончился"
+                error_message=f"❌ Недостаточно товара! В наличии: {stock} шт."
             )
-            logger.warning(f"Pre-checkout отклонён: товар {product_id} закончился")
+            logger.warning(f"Pre-checkout отклонён: товар {product_id} закончился (нужно {quantity}, есть {stock})")
             return
         
         # Всё ОК, можно принимать платёж
@@ -1417,8 +1504,10 @@ async def process_successful_payment(message: Message):
         
         
         # Обычный товар
-        product_id = payload.replace("product_", "")
-        logger.info(f"Успешная оплата: product_id={product_id}, user_id={message.from_user.id}")
+        parts = payload.replace("product_", "").split("_")
+        product_id = parts[0]
+        quantity = int(parts[1]) if len(parts) > 1 else 1
+        logger.info(f"Успешная оплата: product_id={product_id}, quantity={quantity}, user_id={message.from_user.id}")
 
         product = db.get_product(product_id)
 
@@ -1444,13 +1533,28 @@ async def process_successful_payment(message: Message):
         # Проверяем тип выдачи
         delivery_type = product.get("delivery_type", "auto")
 
-        # Отправляем подтверждение
+        total_price = product['price'] * quantity
+        
+        # Отправляем подтверждение и запрашиваем сообщение
         await message.answer(
             f"✅ <b>Спасибо за покупку!</b>\n\n"
             f"Товар: {product['name']}\n"
-            f"Цена: {product['price']} ⭐",
+            f"Количество: {quantity} шт.\n"
+            f"Цена: {total_price} ⭐\n\n"
+            "💬 Хотите оставить сообщение к заказу? (Напишите сообщение или отправьте /skip)",
             parse_mode=ParseMode.HTML
         )
+        
+        # Сохраняем данные для запроса сообщения в БД
+        if "buy_messages" not in db.data:
+            db.data["buy_messages"] = {}
+        db.data["buy_messages"][str(message.from_user.id)] = {
+            "product_id": product_id,
+            "quantity": quantity,
+            "price": total_price,
+            "payment_type": "stars"
+        }
+        db.save()
 
         if delivery_type == "manual":
             # Ручная выдача - добавляем в очередь
@@ -1459,7 +1563,8 @@ async def process_successful_payment(message: Message):
                 message.from_user.username or "Без username",
                 product_id,
                 product["name"],
-                product["price"]
+                total_price,
+                quantity
             )
             
             await message.answer(
@@ -1479,7 +1584,8 @@ async def process_successful_payment(message: Message):
                         admin_id,
                         f"🔔 <b>Новый заказ на ручную выдачу!</b>\n\n"
                         f"Товар: {product['name']}\n"
-                        f"Цена: {product['price']} ⭐\n"
+                        f"Количество: {quantity} шт.\n"
+                        f"Цена: {total_price} ⭐\n"
                         f"Покупатель: @{message.from_user.username or message.from_user.id}\n"
                         f"ID: {message.from_user.id}",
                         parse_mode=ParseMode.HTML,
@@ -1494,33 +1600,35 @@ async def process_successful_payment(message: Message):
                 message.from_user.username or "Без username",
                 product_id,
                 product["name"],
-                product["price"],
-                status="pending"
+                total_price,
+                status="pending",
+                quantity=quantity
             )
         else:
-            # Автоматическая выдача
+            # Автоматическая выдача - выдаем quantity раз
             material = product["material"]
-
-            if material["type"] == "text":
-                await message.answer(
-                    f"📄 <b>Ваш материал:</b>\n\n{material['content']}",
-                    parse_mode=ParseMode.HTML
-                )
-            elif material["type"] == "file":
-                await message.answer_document(
-                    document=material["file_id"],
-                    caption="📄 Ваш материал"
-                )
-            elif material["type"] == "photo":
-                await message.answer_photo(
-                    photo=material["file_id"],
-                    caption="📄 Ваш материал"
-                )
-            elif material["type"] == "video":
-                await message.answer_video(
-                    video=material["file_id"],
-                    caption="📄 Ваш материал"
-                )
+            for i in range(quantity):
+                if material["type"] == "text":
+                    await message.answer(
+                        f"📄 <b>Ваш материал ({i+1}/{quantity}):</b>\n\n{material['content']}",
+                        parse_mode=ParseMode.HTML
+                    )
+                elif material["type"] == "file":
+                    await message.answer_document(
+                        document=material["file_id"],
+                        caption=f"📄 Ваш материал ({i+1}/{quantity})"
+                    )
+                elif material["type"] == "photo":
+                    await message.answer_photo(
+                        photo=material["file_id"],
+                        caption=f"📄 Ваш материал ({i+1}/{quantity})"
+                    )
+                elif material["type"] == "video":
+                    await message.answer_video(
+                        video=material["file_id"],
+                        caption=f"📄 Ваш материал ({i+1}/{quantity})"
+                    )
+                await asyncio.sleep(0.5)  # Небольшая задержка между выдачами
 
             # Уведомляем админов о продаже
             for admin_id in ADMIN_IDS:
@@ -1529,7 +1637,8 @@ async def process_successful_payment(message: Message):
                         admin_id,
                         f"💰 <b>Новая продажа (авто)!</b>\n\n"
                         f"Товар: {product['name']}\n"
-                        f"Цена: {product['price']} ⭐\n"
+                        f"Количество: {quantity} шт.\n"
+                        f"Цена: {total_price} ⭐\n"
                         f"Покупатель: @{message.from_user.username or message.from_user.id}",
                         parse_mode=ParseMode.HTML
                     )
@@ -1542,16 +1651,72 @@ async def process_successful_payment(message: Message):
                 message.from_user.username or "Без username",
                 product_id,
                 product["name"],
-                product["price"],
-                status="completed"
+                total_price,
+                status="completed",
+                quantity
             )
 
-        # Уменьшаем остаток товара
-        db.decrease_stock(product_id)
+        # Уменьшаем остаток товара на quantity
+        for _ in range(quantity):
+            db.decrease_stock(product_id)
 
     except Exception as e:
         logger.error(f"Критическая ошибка в successful_payment: {e}", exc_info=True)
         await message.answer(f"❌ Критическая ошибка: {str(e)}")
+
+
+# ============= ОБРАБОТКА СООБЩЕНИЯ ПОСЛЕ ОПЛАТЫ =============
+@router.message(Command("skip"))
+async def skip_message(message: Message):
+    """Пропустить сообщение после оплаты"""
+    user_id = str(message.from_user.id)
+    if "buy_messages" in db.data and user_id in db.data["buy_messages"]:
+        del db.data["buy_messages"][user_id]
+        db.save()
+        await message.answer("✅ Сообщение пропущено.", parse_mode=ParseMode.HTML)
+
+
+@router.message(F.text & ~F.text.startswith("/") & ~F.text.in_(["🛍️ Каталог товаров", "👤 Личный кабинет", "📜 Мои заказы", "🎯 Реферальная программа"]))
+async def process_buy_message(message: Message):
+    """Обработка сообщения после оплаты"""
+    user_id = str(message.from_user.id)
+    
+    # Проверяем, есть ли ожидающее сообщение
+    if "buy_messages" not in db.data or user_id not in db.data["buy_messages"]:
+        return  # Не обрабатываем, если это не сообщение после оплаты
+    
+    buy_data = db.data["buy_messages"][user_id]
+    product_id = buy_data["product_id"]
+    quantity = buy_data["quantity"]
+    price = buy_data["price"]
+    payment_type = buy_data["payment_type"]
+    
+    # Удаляем из ожидающих
+    del db.data["buy_messages"][user_id]
+    db.save()
+    
+    # Сохраняем сообщение в заказе
+    user_message = message.text
+    
+    # Уведомляем админов о сообщении
+    for admin_id in ADMIN_IDS:
+        try:
+            product = db.get_product(product_id)
+            await message.bot.send_message(
+                admin_id,
+                f"💬 <b>Сообщение от покупателя</b>\n\n"
+                f"Товар: {product['name']}\n"
+                f"Количество: {quantity} шт.\n"
+                f"Цена: {price} ⭐\n"
+                f"Покупатель: @{message.from_user.username or message.from_user.id}\n"
+                f"ID: {message.from_user.id}\n\n"
+                f"<b>Сообщение:</b>\n{user_message}",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Ошибка отправки сообщения админу: {e}")
+    
+    await message.answer("✅ Ваше сообщение отправлено администратору!", parse_mode=ParseMode.HTML)
 
 
 # ============= АДМИН: ДОБАВИТЬ ТОВАР =============
@@ -2585,6 +2750,18 @@ async def main():
         dp.include_router(router)
 
         await bot.delete_webhook(drop_pending_updates=True)
+        
+        # Устанавливаем команды для автодополнения
+        commands = [
+            BotCommand(command="start", description="Запустить бота"),
+            BotCommand(command="buy", description="Каталог товаров"),
+            BotCommand(command="profile", description="Личный кабинет"),
+            BotCommand(command="myorders", description="Мои заказы"),
+            BotCommand(command="referral", description="Реферальная программа"),
+            BotCommand(command="help", description="Справка по командам"),
+        ]
+        await bot.set_my_commands(commands)
+        
         logger.info("🤖 Бот запущен!")
         logger.info(f"Админы: {ADMIN_IDS}")
         await dp.start_polling(bot)
