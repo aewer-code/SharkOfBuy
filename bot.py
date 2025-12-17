@@ -400,9 +400,7 @@ def get_main_reply_keyboard():
     """Главная Reply клавиатура после подписки"""
     keyboard = [
         [KeyboardButton(text="🛍️ Каталог товаров"), KeyboardButton(text="👤 Личный кабинет")],
-        [KeyboardButton(text="🎁 Получить подарок"), KeyboardButton(text="📜 Мои заказы")],
-        [KeyboardButton(text="🎯 Реферальная программа"), KeyboardButton(text="❓ FAQ")],
-        [KeyboardButton(text="💬 Поддержка"), KeyboardButton(text="ℹ️ О боте")]
+        [KeyboardButton(text="📜 Мои заказы"), KeyboardButton(text="🎯 Реферальная программа")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -544,16 +542,14 @@ async def cmd_start(message: Message):
         # Пользователь подписан - показываем приветствие
         balance = db.get_balance(user_id)
         welcome_text = (
-            "🎉 <b>Добро пожаловать в Shark Of Buy!</b>\n\n"
-            "<i>Быстро • Надежно • Безопасно</i>\n\n"
-            f"💰 <b>Баланс:</b> {balance} ⭐\n\n"
+            "![🤟](tg://emoji?id=5298505616099149456) <b>Добро пожаловать в Shark Of Buy!</b>\n"
+            "<b>Быстро • Надежно • Безопасно</b>\n\n"
+            f"![😶‍🌫️](tg://emoji?id=5305729501982919477) <b>Баланс:</b> {balance} ![⭐️](tg://emoji?id=5321485469249198987)\n\n"
             "<b>Доступные команды:</b>\n"
             "/buy - Каталог товаров\n"
             "/profile - Личный кабинет\n"
             "/myorders - Мои заказы\n"
             "/referral - Реферальная программа\n"
-            "/faq - Частые вопросы\n"
-            "/support - Поддержка\n"
             "/help - Справка\n\n"
             f"<b>Создатель:</b> {BOT_CREATOR}"
         )
@@ -614,8 +610,6 @@ async def process_check_subscription(callback: CallbackQuery):
                 "/profile - Личный кабинет\n"
                 "/myorders - Мои заказы\n"
                 "/referral - Реферальная программа\n"
-                "/faq - Частые вопросы\n"
-                "/support - Поддержка\n"
                 "/help - Справка\n\n"
                 f"<b>Создатель:</b> {BOT_CREATOR}"
             )
@@ -875,95 +869,6 @@ async def cmd_referral(message: Message):
     )
     
     await message.answer(text, parse_mode=ParseMode.HTML)
-
-
-@router.message(Command("faq"))
-@router.message(F.text == "❓ FAQ")
-async def cmd_faq(message: Message):
-    """Частые вопросы"""
-    text = (
-        "❓ <b>Частые вопросы</b>\n\n"
-        "<b>Q: Как купить товар?</b>\n"
-        "A: Выберите товар из каталога и оплатите звездами Telegram.\n\n"
-        "<b>Q: Что такое звезды Telegram?</b>\n"
-        "A: Это внутренняя валюта Telegram для оплаты.\n\n"
-        "<b>Q: Как получить товар?</b>\n"
-        "A: После оплаты товар придет автоматически или вручную от админа.\n\n"
-        "<b>Q: Можно ли вернуть деньги?</b>\n"
-        "A: Обратитесь в поддержку для решения вопроса.\n\n"
-        f"<b>Остались вопросы?</b> Напишите: {BOT_CREATOR}"
-    )
-    
-    await message.answer(text, parse_mode=ParseMode.HTML)
-
-
-@router.message(Command("support"))
-@router.message(F.text == "💬 Поддержка")
-async def cmd_support(message: Message):
-    """Поддержка"""
-    text = (
-        "💬 <b>Поддержка</b>\n\n"
-        f"По всем вопросам обращайтесь к создателю:\n"
-        f"{BOT_CREATOR}\n\n"
-        "Время ответа: обычно в течение 24 часов"
-    )
-    
-    await message.answer(text, parse_mode=ParseMode.HTML)
-
-
-@router.message(F.text == "ℹ️ О боте")
-async def cmd_about(message: Message):
-    """О боте"""
-    text = (
-        "ℹ️ <b>О боте Shark Of Buy</b>\n\n"
-        "Автоматизированный магазин для покупки товаров и услуг\n\n"
-        "<b>Особенности:</b>\n"
-        "• Мгновенная доставка\n"
-        "• Безопасные платежи\n"
-        "• Качественные товары\n"
-        "• Бонусы и подарки\n"
-        "• Реферальная программа\n\n"
-        f"<b>Создатель:</b> {BOT_CREATOR}\n"
-        f"<b>Канал:</b> {REQUIRED_CHANNEL}"
-    )
-    
-    await message.answer(text, parse_mode=ParseMode.HTML)
-
-
-@router.message(F.text == "🎁 Получить подарок")
-async def cmd_get_gift(message: Message):
-    """Получить платный подарок (мишка)"""
-    text = (
-        "🎁 <b>Получите подарок-мишку от бота!</b>\n\n"
-        "🧸 Заплатите <b>20 звезд</b>, чтобы получить подарок мишку от бота!\n\n"
-        "💝 Это отличный способ порадовать себя или друга!"
-    )
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎁 Купить подарок за 20 ⭐", callback_data="buy_gift_bear")]
-    ])
-    
-    await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-
-
-@router.callback_query(F.data == "buy_gift_bear")
-async def process_buy_gift(callback: CallbackQuery):
-    """Обработка покупки подарка"""
-    try:
-        prices = [LabeledPrice(label="Подарок мишка 🧸", amount=20)]
-        
-        await callback.message.answer_invoice(
-            title="🎁 Подарок мишка",
-            description="Получите подарок-мишку от бота Shark Of Buy!",
-            payload="gift_bear",
-            provider_token="",
-            currency="XTR",
-            prices=prices
-        )
-        await callback.answer()
-    except Exception as e:
-        logger.error(f"Ошибка при покупке подарка: {e}")
-        await callback.answer("❌ Ошибка", show_alert=True)
 
 
 @router.message(Command("admin"))
@@ -1510,37 +1415,6 @@ async def process_successful_payment(message: Message):
                     pass
             return
         
-        # Проверяем, это подарок или товар
-        if payload == "gift_bear":
-            # Отправляем подарок мишку
-            await message.answer(
-                "🎉 <b>Спасибо за покупку подарка!</b>\n\n"
-                "Вот ваш подарок:",
-                parse_mode=ParseMode.HTML
-            )
-            
-            # Отправляем gift с подписью
-            await message.answer_gift(
-                gift_id="7876657539541926320",  # ID подарка мишка
-                text="@SharkBuy_rebot - лучший бот для покупки различных товаров!",
-                text_parse_mode=ParseMode.HTML
-            )
-            
-            logger.info(f"Подарок мишка выдан пользователю {message.from_user.id}")
-            
-            # Уведомляем админов
-            for admin_id in ADMIN_IDS:
-                try:
-                    await message.bot.send_message(
-                        admin_id,
-                        f"🎁 <b>Продан подарок мишка!</b>\n\n"
-                        f"Покупатель: @{message.from_user.username or message.from_user.id}\n"
-                        f"Цена: 20 ⭐",
-                        parse_mode=ParseMode.HTML
-                    )
-                except:
-                    pass
-            return
         
         # Обычный товар
         product_id = payload.replace("product_", "")
