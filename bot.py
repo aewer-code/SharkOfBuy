@@ -173,6 +173,67 @@ async def cmd_start(message: Message):
         pass
 
 
+# Обработчик номера телефона при состоянии waiting_phone (должен быть ПЕРЕД обработчиком прямого ввода)
+@router.message(StateFilter(SessionStates.waiting_phone))
+async def session_add_phone(message: Message, state: FSMContext):
+    """Обработка номера телефона"""
+    logger.info(f"🔍 session_add_phone вызван: user_id={message.from_user.id}, text={message.text}")
+    
+    if not message.text:
+        await message.answer("❌ Номер телефона не может быть пустым. Введите снова:")
+        return
+    
+    phone = message.text.strip()
+    
+    if not phone.startswith('+'):
+        phone = '+' + phone
+    
+    await state.update_data(phone=phone)
+    
+    data = await state.get_data()
+    api_id = data["api_id"]
+    api_hash = data["api_hash"]
+    
+    await message.answer("⏳ Отправляю код в Telegram...")
+    
+    success, msg, client = await session_manager.start_phone_auth(
+        message.from_user.id, api_id, api_hash, phone
+    )
+    
+    if not success:
+        await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
+        await state.clear()
+        return
+
+    if "Уже авторизован" in msg:
+        await message.answer(msg, parse_mode=ParseMode.HTML)
+        await state.clear()
+        return
+
+    code_keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
+            [KeyboardButton(text="4"), KeyboardButton(text="5"), KeyboardButton(text="6")],
+            [KeyboardButton(text="7"), KeyboardButton(text="8"), KeyboardButton(text="9")],
+            [KeyboardButton(text="< Стереть"), KeyboardButton(text="0")],
+            [KeyboardButton(text="✅ Отправить")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False
+    )
+    
+    await message.answer(
+        f"✅ {msg}\n\n"
+        "🔑 <b>Введите код:</b>\n\n"
+        "Код пришел в приложении Telegram.\n"
+        "Используйте клавиатуру ниже для ввода:",
+        reply_markup=code_keyboard,
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(SessionStates.waiting_code)
+    await state.update_data(code_input="")
+
+
 # Обработчик API Hash при состоянии waiting_api_hash (должен быть ПЕРЕД обработчиком прямого ввода)
 @router.message(SessionStates.waiting_api_hash)
 async def session_add_api_hash(message: Message, state: FSMContext):
@@ -554,61 +615,6 @@ async def session_method_phone(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(SessionStates.waiting_phone)
     await callback.answer()
-
-
-@router.message(StateFilter(SessionStates.waiting_phone))
-async def session_add_phone(message: Message, state: FSMContext):
-    """Обработка номера телефона"""
-    phone = message.text.strip()
-    
-    if not phone.startswith('+'):
-        phone = '+' + phone
-    
-    await state.update_data(phone=phone)
-    
-    data = await state.get_data()
-    api_id = data["api_id"]
-    api_hash = data["api_hash"]
-    
-    await message.answer("⏳ Отправляю код в Telegram...")
-    
-    success, msg, client = await session_manager.start_phone_auth(
-        message.from_user.id, api_id, api_hash, phone
-    )
-    
-    if not success:
-        await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
-        await state.clear()
-        return
-
-    if "Уже авторизован" in msg:
-        await message.answer(msg, parse_mode=ParseMode.HTML)
-        await state.clear()
-        return
-
-    code_keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
-            [KeyboardButton(text="4"), KeyboardButton(text="5"), KeyboardButton(text="6")],
-            [KeyboardButton(text="7"), KeyboardButton(text="8"), KeyboardButton(text="9")],
-            [KeyboardButton(text="< Стереть"), KeyboardButton(text="0")],
-            [KeyboardButton(text="✅ Отправить")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
-    
-    await message.answer(
-        f"✅ {msg}\n\n"
-        "🔑 <b>Введите код:</b>\n\n"
-        "Код пришел в приложении Telegram.\n"
-        "Используйте клавиатуру ниже для ввода:",
-        reply_markup=code_keyboard,
-        parse_mode=ParseMode.HTML
-    )
-    
-    await state.set_state(SessionStates.waiting_code)
-    await state.update_data(code_input="")
 
 
 @router.message(StateFilter(SessionStates.waiting_code))
