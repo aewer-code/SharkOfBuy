@@ -161,6 +161,33 @@ async def cmd_start(message: Message):
     await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
+# Обработчик API Hash при состоянии waiting_api_hash (должен быть ПЕРЕД обработчиком прямого ввода)
+@router.message(SessionStates.waiting_api_hash)
+async def session_add_api_hash(message: Message, state: FSMContext):
+    """Обработка API Hash"""
+    logger.info(f"🔍 session_add_api_hash вызван: user_id={message.from_user.id}, text={message.text}")
+    
+    if not message.text:
+        await message.answer("❌ API Hash не может быть пустым. Введите снова:")
+        return
+    
+    api_hash = message.text.strip()
+    await state.update_data(api_hash=api_hash)
+    logger.info(f"✅ API Hash принят, длина: {len(api_hash)}")
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📁 Загрузить файл сессии", callback_data="session_method_file")],
+        [InlineKeyboardButton(text="📱 Войти по номеру телефона", callback_data="session_method_phone")]
+    ])
+    
+    await message.answer(
+        f"✅ API Hash: <b>{api_hash}</b>\n\n"
+        "Выберите способ авторизации:",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
+
+
 # Обработчик API ID при состоянии waiting_api_id (должен быть ПЕРЕД обработчиком прямого ввода)
 @router.message(SessionStates.waiting_api_id)
 async def session_add_api_id(message: Message, state: FSMContext):
@@ -190,10 +217,14 @@ async def session_api_id_direct(message: Message, state: FSMContext):
     # Сначала проверяем состояние - если есть активное состояние waiting_api_id или waiting_api_hash, пропускаем
     # Это нужно сделать в самом начале, чтобы не мешать другим обработчикам
     current_state = await state.get_state()
+    logger.info(f"🔍 session_api_id_direct: состояние={current_state}, текст={message.text}")
+    
     if current_state:
         state_str = str(current_state)
+        logger.info(f"🔍 session_api_id_direct: проверка состояния {state_str}")
         if "waiting_api_id" in state_str or "waiting_api_hash" in state_str:
             # Другие обработчики с фильтрами состояний обработают сообщение
+            logger.info(f"⏭️ session_api_id_direct: пропускаем, состояние {state_str}")
             return
     
     logger.info(f"🔍 session_api_id_direct вызван: user_id={message.from_user.id}, text={message.text}, chat_type={message.chat.type}")
@@ -482,32 +513,6 @@ async def session_add_start(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(SessionStates.waiting_api_id)
     await callback.answer()
-
-
-@router.message(SessionStates.waiting_api_hash)
-async def session_add_api_hash(message: Message, state: FSMContext):
-    """Обработка API Hash"""
-    logger.info(f"🔍 session_add_api_hash вызван: user_id={message.from_user.id}, text={message.text}")
-    
-    if not message.text:
-        await message.answer("❌ API Hash не может быть пустым. Введите снова:")
-        return
-    
-    api_hash = message.text.strip()
-    await state.update_data(api_hash=api_hash)
-    logger.info(f"✅ API Hash принят, длина: {len(api_hash)}")
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📁 Загрузить файл сессии", callback_data="session_method_file")],
-        [InlineKeyboardButton(text="📱 Войти по номеру телефона", callback_data="session_method_phone")]
-    ])
-    
-    await message.answer(
-        f"✅ API Hash: <b>{api_hash}</b>\n\n"
-        "Выберите способ авторизации:",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML
-    )
 
 
 @router.callback_query(F.data == "session_method_file")
