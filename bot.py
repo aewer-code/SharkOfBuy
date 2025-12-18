@@ -210,24 +210,27 @@ async def session_add_phone(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    code_keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
-            [KeyboardButton(text="4"), KeyboardButton(text="5"), KeyboardButton(text="6")],
-            [KeyboardButton(text="7"), KeyboardButton(text="8"), KeyboardButton(text="9")],
-            [KeyboardButton(text="< Стереть"), KeyboardButton(text="0")],
-            [KeyboardButton(text="✅ Отправить")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
+    code_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="1", callback_data="code_1"),
+         InlineKeyboardButton(text="2", callback_data="code_2"),
+         InlineKeyboardButton(text="3", callback_data="code_3")],
+        [InlineKeyboardButton(text="4", callback_data="code_4"),
+         InlineKeyboardButton(text="5", callback_data="code_5"),
+         InlineKeyboardButton(text="6", callback_data="code_6")],
+        [InlineKeyboardButton(text="7", callback_data="code_7"),
+         InlineKeyboardButton(text="8", callback_data="code_8"),
+         InlineKeyboardButton(text="9", callback_data="code_9")],
+        [InlineKeyboardButton(text="< Стереть", callback_data="code_delete"),
+         InlineKeyboardButton(text="0", callback_data="code_0")],
+        [InlineKeyboardButton(text="✅ Отправить", callback_data="code_submit")]
+    ])
     
-    # Отправляем сообщение с клавиатурой и сохраняем его ID
+    # Отправляем сообщение с кнопками и сохраняем его ID
     code_message = await message.answer(
         f"✅ Код отправлен в Telegram\n\n"
         "🔑 <b>Введите код:</b> _____\n\n"
         "Код пришел в приложении Telegram.\n"
-        "Используйте клавиатуру ниже для ввода:",
+        "Используйте кнопки ниже для ввода:",
         reply_markup=code_keyboard,
         parse_mode=ParseMode.HTML
     )
@@ -629,79 +632,85 @@ async def session_method_phone(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(StateFilter(SessionStates.waiting_code))
-async def session_add_code(message: Message, state: FSMContext):
-    """Обработка кода авторизации"""
+# Обработчик кнопок ввода кода
+@router.callback_query(F.data.startswith("code_"))
+async def handle_code_button(callback: CallbackQuery, state: FSMContext):
+    """Обработка нажатий кнопок ввода кода"""
     data = await state.get_data()
     code_input = data.get("code_input", "")
     code_message_id = data.get("code_message_id")
     
-    text = message.text.strip()
+    button_data = callback.data
     
-    code_keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
-            [KeyboardButton(text="4"), KeyboardButton(text="5"), KeyboardButton(text="6")],
-            [KeyboardButton(text="7"), KeyboardButton(text="8"), KeyboardButton(text="9")],
-            [KeyboardButton(text="< Стереть"), KeyboardButton(text="0")],
-            [KeyboardButton(text="✅ Отправить")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
+    code_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="1", callback_data="code_1"),
+         InlineKeyboardButton(text="2", callback_data="code_2"),
+         InlineKeyboardButton(text="3", callback_data="code_3")],
+        [InlineKeyboardButton(text="4", callback_data="code_4"),
+         InlineKeyboardButton(text="5", callback_data="code_5"),
+         InlineKeyboardButton(text="6", callback_data="code_6")],
+        [InlineKeyboardButton(text="7", callback_data="code_7"),
+         InlineKeyboardButton(text="8", callback_data="code_8"),
+         InlineKeyboardButton(text="9", callback_data="code_9")],
+        [InlineKeyboardButton(text="< Стереть", callback_data="code_delete"),
+         InlineKeyboardButton(text="0", callback_data="code_0")],
+        [InlineKeyboardButton(text="✅ Отправить", callback_data="code_submit")]
+    ])
     
-    if text == "< Стереть":
+    if button_data == "code_delete":
         if code_input:
             code_input = code_input[:-1]
             await state.update_data(code_input=code_input)
+            await callback.answer()
+            
             # Обновляем сообщение с кодом
             code_display = code_input + ('_' * (5 - len(code_input)))
             if code_message_id:
                 try:
-                    await message.bot.edit_message_text(
-                        chat_id=message.chat.id,
-                        message_id=code_message_id,
-                        text=f"✅ Код отправлен в Telegram\n\n"
-                             f"🔑 <b>Введите код:</b> {code_display}\n\n"
-                             f"Код пришел в приложении Telegram.\n"
-                             f"Используйте клавиатуру ниже для ввода:",
+                    await callback.message.edit_text(
+                        f"✅ Код отправлен в Telegram\n\n"
+                        f"🔑 <b>Введите код:</b> {code_display}\n\n"
+                        f"Код пришел в приложении Telegram.\n"
+                        f"Используйте кнопки ниже для ввода:",
                         reply_markup=code_keyboard,
                         parse_mode=ParseMode.HTML
                     )
                 except:
                     pass
+        else:
+            await callback.answer("Код пуст")
         return
     
-    if text == "✅ Отправить":
+    if button_data == "code_submit":
         if not code_input or len(code_input) < 5:
-            await message.answer("❌ Код должен содержать минимум 5 цифр")
+            await callback.answer("❌ Код должен содержать минимум 5 цифр", show_alert=True)
             return
-    
-        # Удаляем клавиатуру и обновляем сообщение
+        
+        await callback.answer()
+        
+        # Обновляем сообщение
         if code_message_id:
             try:
-                await message.bot.edit_message_text(
-                    chat_id=message.chat.id,
-                    message_id=code_message_id,
-                    text="⏳ Проверяю код...",
+                await callback.message.edit_text(
+                    "⏳ Проверяю код...",
                     parse_mode=ParseMode.HTML
                 )
             except:
                 pass
         
         success, msg = await session_manager.complete_phone_auth(
-            message.from_user.id, code_input
+            callback.from_user.id, code_input
         )
         
         if success:
-            await message.answer(
+            await callback.message.answer(
                 f"{msg}\n\n"
                 "Теперь вы можете использовать команды для рассылки.",
                 parse_mode=ParseMode.HTML
             )
             await state.clear()
         elif msg == "NEED_PASSWORD":
-            await message.answer(
+            await callback.message.answer(
                 "🔐 <b>Требуется пароль двухфакторной аутентификации</b>\n\n"
                 "Введите пароль:",
                 parse_mode=ParseMode.HTML
@@ -709,126 +718,84 @@ async def session_add_code(message: Message, state: FSMContext):
             await state.set_state(SessionStates.waiting_password)
             await state.update_data(code=code_input)
         else:
-            await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
-            # Отправляем новое сообщение с клавиатурой
-            code_message = await message.answer(
+            await callback.message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
+            # Отправляем новое сообщение с кнопками
+            code_message = await callback.message.answer(
                 "🔑 <b>Введите код снова:</b> _____\n\n"
                 "Код пришел в приложении Telegram.\n"
-                "Используйте клавиатуру ниже для ввода:",
+                "Используйте кнопки ниже для ввода:",
                 reply_markup=code_keyboard,
                 parse_mode=ParseMode.HTML
             )
             await state.update_data(code_input="", code_message_id=code_message.message_id)
         return
     
-    # Добавляем цифру
-    if text.isdigit() and len(text) == 1:
-        code_input += text
-        await state.update_data(code_input=code_input)
-        
-        # Обновляем сообщение с кодом
-        code_display = code_input + ('_' * (5 - len(code_input)))
-        if code_message_id:
-            try:
-                await message.bot.edit_message_text(
-                    chat_id=message.chat.id,
-                    message_id=code_message_id,
-                    text=f"✅ Код отправлен в Telegram\n\n"
-                         f"🔑 <b>Введите код:</b> {code_display}\n\n"
-                         f"Код пришел в приложении Telegram.\n"
-                         f"Используйте клавиатуру ниже для ввода:",
-                    reply_markup=code_keyboard,
-                    parse_mode=ParseMode.HTML
-                )
-            except:
-                pass
-        
-        # Если код введен полностью (5 цифр), автоматически отправляем на проверку
-        if len(code_input) >= 5:
-            # Удаляем клавиатуру и обновляем сообщение
+    # Добавляем цифру (code_1, code_2, ..., code_9, code_0)
+    if button_data.startswith("code_") and len(button_data) == 6:
+        digit = button_data[-1]
+        if digit.isdigit():
+            code_input += digit
+            await state.update_data(code_input=code_input)
+            await callback.answer()
+            
+            # Обновляем сообщение с кодом
+            code_display = code_input + ('_' * (5 - len(code_input)))
             if code_message_id:
                 try:
-                    await message.bot.edit_message_text(
-                        chat_id=message.chat.id,
-                        message_id=code_message_id,
-                        text="⏳ Проверяю код...",
+                    await callback.message.edit_text(
+                        f"✅ Код отправлен в Telegram\n\n"
+                        f"🔑 <b>Введите код:</b> {code_display}\n\n"
+                        f"Код пришел в приложении Telegram.\n"
+                        f"Используйте кнопки ниже для ввода:",
+                        reply_markup=code_keyboard,
                         parse_mode=ParseMode.HTML
                     )
                 except:
                     pass
             
-            success, msg = await session_manager.complete_phone_auth(
-                message.from_user.id, code_input
-            )
-            
-            if success:
-                await message.answer(
-                    f"{msg}\n\n"
-                    "Теперь вы можете использовать команды для рассылки.",
-                    parse_mode=ParseMode.HTML
+            # Если код введен полностью (5 цифр), автоматически отправляем на проверку
+            if len(code_input) >= 5:
+                # Обновляем сообщение
+                if code_message_id:
+                    try:
+                        await callback.message.edit_text(
+                            "⏳ Проверяю код...",
+                            parse_mode=ParseMode.HTML
+                        )
+                    except:
+                        pass
+                
+                success, msg = await session_manager.complete_phone_auth(
+                    callback.from_user.id, code_input
                 )
-                await state.clear()
-            elif msg == "NEED_PASSWORD":
-                await message.answer(
-                    "🔐 <b>Требуется пароль двухфакторной аутентификации</b>\n\n"
-                    "Введите пароль:",
-                    parse_mode=ParseMode.HTML
-                )
-                await state.set_state(SessionStates.waiting_password)
-                await state.update_data(code=code_input)
-            else:
-                await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
-                # Отправляем новое сообщение с клавиатурой
-                code_message = await message.answer(
-                    "🔑 <b>Введите код снова:</b> _____\n\n"
-                    "Код пришел в приложении Telegram.\n"
-                    "Используйте клавиатуру ниже для ввода:",
-                    reply_markup=code_keyboard,
-                    parse_mode=ParseMode.HTML
-                )
-                await state.update_data(code_input="", code_message_id=code_message.message_id)
-    elif text.isdigit() and len(text) >= 5:
-        # Пользователь ввел код целиком
-        await message.answer("⏳ Проверяю код...", reply_markup=None)
-        
-        success, msg = await session_manager.complete_phone_auth(
-            message.from_user.id, text
-        )
-        
-        if success:
-            await message.answer(
-                f"{msg}\n\n"
-                "Теперь вы можете использовать команды для рассылки.",
-                parse_mode=ParseMode.HTML
-            )
-            await state.clear()
-        elif msg == "NEED_PASSWORD":
-            await message.answer(
-                "🔐 <b>Требуется пароль двухфакторной аутентификации</b>\n\n"
-                "Введите пароль:",
-                parse_mode=ParseMode.HTML
-            )
-            await state.set_state(SessionStates.waiting_password)
-            await state.update_data(code=text)
-        else:
-            await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
-            code_keyboard = ReplyKeyboardMarkup(
-                keyboard=[
-                    [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
-                    [KeyboardButton(text="4"), KeyboardButton(text="5"), KeyboardButton(text="6")],
-                    [KeyboardButton(text="7"), KeyboardButton(text="8"), KeyboardButton(text="9")],
-                    [KeyboardButton(text="< Стереть"), KeyboardButton(text="0")],
-                    [KeyboardButton(text="✅ Отправить")]
-                ],
-                resize_keyboard=True,
-                one_time_keyboard=False
-            )
-            await message.answer(
-                "🔑 <b>Введите код снова:</b>",
-                reply_markup=code_keyboard,
-                parse_mode=ParseMode.HTML
-            )
-            await state.update_data(code_input="")
+                
+                if success:
+                    await callback.message.answer(
+                        f"{msg}\n\n"
+                        "Теперь вы можете использовать команды для рассылки.",
+                        parse_mode=ParseMode.HTML
+                    )
+                    await state.clear()
+                elif msg == "NEED_PASSWORD":
+                    await callback.message.answer(
+                        "🔐 <b>Требуется пароль двухфакторной аутентификации</b>\n\n"
+                        "Введите пароль:",
+                        parse_mode=ParseMode.HTML
+                    )
+                    await state.set_state(SessionStates.waiting_password)
+                    await state.update_data(code=code_input)
+                else:
+                    await callback.message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
+                    # Отправляем новое сообщение с кнопками
+                    code_message = await callback.message.answer(
+                        "🔑 <b>Введите код снова:</b> _____\n\n"
+                        "Код пришел в приложении Telegram.\n"
+                        "Используйте кнопки ниже для ввода:",
+                        reply_markup=code_keyboard,
+                        parse_mode=ParseMode.HTML
+                    )
+                    await state.update_data(code_input="", code_message_id=code_message.message_id)
+        return
 
 
 @router.message(StateFilter(SessionStates.waiting_password))
