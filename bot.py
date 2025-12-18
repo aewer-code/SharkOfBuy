@@ -161,6 +161,36 @@ async def cmd_start(message: Message):
     await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
+# Обработчик прямого ввода API ID (должен быть ПЕРЕД обработчиком команд)
+@router.message(
+    F.text.regexp(r'^\d{6,}$') & 
+    ~StateFilter(SessionStates.waiting_code) &
+    ~StateFilter(SessionStates.waiting_password) &
+    ~StateFilter(SessionStates.waiting_phone) &
+    ~StateFilter(SessionStates.waiting_session_file) &
+    ~StateFilter(SessionStates.waiting_api_hash) &
+    ~StateFilter(SessionStates.waiting_api_id) &
+    ~F.text.startswith(".")
+)
+async def session_api_id_direct(message: Message, state: FSMContext):
+    """Обработка прямого ввода API ID"""
+    # Всегда отвечаем на число, если не в процессе другой операции
+    logger.info(f"Обработчик прямого ввода API ID вызван для пользователя {message.from_user.id}, текст: {message.text}")
+    try:
+        api_id = int(message.text.strip())
+        await state.update_data(api_id=api_id)
+        await state.set_state(SessionStates.waiting_api_hash)
+        logger.info(f"API ID {api_id} принят, переходим к API Hash")
+        await message.answer(
+            f"✅ API ID: <b>{api_id}</b>\n\n"
+            "Теперь введите ваш <b>API Hash</b> (строка):",
+            parse_mode=ParseMode.HTML
+        )
+    except ValueError as e:
+        logger.error(f"Ошибка парсинга API ID: {e}")
+        pass
+
+
 # Обработчик команд с префиксом точки
 @router.message(F.text.startswith("."))
 async def handle_dot_command(message: Message, state: FSMContext):
@@ -397,30 +427,7 @@ async def handle_chats_file(message: Message, state: FSMContext):
         await state.clear()
 
 
-# Обработчик прямого ввода API ID (если не в процессе другой операции)
-@router.message(F.text.regexp(r'^\d{6,}$'))
-async def session_api_id_direct(message: Message, state: FSMContext):
-    """Обработка прямого ввода API ID"""
-    current_state = await state.get_state()
-    
-    # Если уже в процессе добавления сессии, пропускаем
-    if current_state and current_state not in [None, ""]:
-        return
-    
-    try:
-        api_id = int(message.text.strip())
-        await state.update_data(api_id=api_id)
-        await state.set_state(SessionStates.waiting_api_hash)
-        await message.answer(
-            f"✅ API ID: <b>{api_id}</b>\n\n"
-            "Теперь введите ваш <b>API Hash</b> (строка):",
-            parse_mode=ParseMode.HTML
-        )
-    except ValueError:
-        pass
-
-
-# Остальные обработчики сессий (копируем из старого бота, но упрощаем)
+# Остальные обработчики сессий
 @router.callback_query(F.data == "session_add")
 async def session_add_start(callback: CallbackQuery, state: FSMContext):
     """Начало добавления сессии"""
