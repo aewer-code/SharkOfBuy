@@ -4,7 +4,7 @@
 cd /home/ecronx/Загрузки/coding
 
 echo "🔄 Добавляем изменения..."
-git add bot.py requirements.txt .gitignore Procfile start.sh
+git add bot.py requirements.txt .gitignore Procfile start.sh session_manager.py SESSIONS_README.md
 
 echo "💾 Коммит..."
 git commit -m "🚀 Обновление бота $(date '+%Y-%m-%d %H:%M')"
