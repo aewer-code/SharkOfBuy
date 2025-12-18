@@ -173,6 +173,34 @@ async def cmd_start(message: Message):
         pass
 
 
+# Обработчик пароля двухфакторной аутентификации (должен быть ПЕРЕД обработчиком прямого ввода)
+@router.message(StateFilter(SessionStates.waiting_password))
+async def session_add_password(message: Message, state: FSMContext):
+    """Обработка пароля двухфакторной аутентификации"""
+    logger.info(f"🔍 session_add_password вызван: user_id={message.from_user.id}, text={message.text}")
+    
+    password = message.text.strip()
+    data = await state.get_data()
+    code = data.get("code", "")
+    
+    await message.answer("⏳ Проверяю пароль...")
+    
+    success, msg = await session_manager.complete_phone_auth(
+        message.from_user.id, code, password
+    )
+    
+    if success:
+        await message.answer(
+            f"{msg}\n\n"
+            "Теперь вы можете использовать команды для рассылки.",
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
+    
+    await state.clear()
+
+
 # Обработчик номера телефона при состоянии waiting_phone (должен быть ПЕРЕД обработчиком прямого ввода)
 @router.message(StateFilter(SessionStates.waiting_phone))
 async def session_add_phone(message: Message, state: FSMContext):
@@ -796,31 +824,6 @@ async def handle_code_button(callback: CallbackQuery, state: FSMContext):
                     )
                     await state.update_data(code_input="", code_message_id=code_message.message_id)
         return
-
-
-@router.message(StateFilter(SessionStates.waiting_password))
-async def session_add_password(message: Message, state: FSMContext):
-    """Обработка пароля двухфакторной аутентификации"""
-    password = message.text.strip()
-    data = await state.get_data()
-    code = data.get("code", "")
-    
-    await message.answer("⏳ Проверяю пароль...")
-    
-    success, msg = await session_manager.complete_phone_auth(
-        message.from_user.id, code, password
-    )
-    
-    if success:
-        await message.answer(
-            f"{msg}\n\n"
-            "Теперь вы можете использовать команды для рассылки.",
-            parse_mode=ParseMode.HTML
-        )
-    else:
-        await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
-    
-    await state.clear()
 
 
 @router.message(StateFilter(SessionStates.waiting_session_file), F.document)
