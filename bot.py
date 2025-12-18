@@ -222,16 +222,17 @@ async def session_add_phone(message: Message, state: FSMContext):
         one_time_keyboard=False
     )
     
-    await message.answer(
-        f"✅ {msg}\n\n"
-        "🔑 <b>Введите код:</b>\n\n"
+    # Отправляем сообщение с клавиатурой и сохраняем его ID
+    code_message = await message.answer(
+        f"✅ Код отправлен в Telegram\n\n"
+        "🔑 <b>Введите код:</b> _____\n\n"
         "Код пришел в приложении Telegram.\n"
         "Используйте клавиатуру ниже для ввода:",
         reply_markup=code_keyboard,
         parse_mode=ParseMode.HTML
     )
     await state.set_state(SessionStates.waiting_code)
-    await state.update_data(code_input="")
+    await state.update_data(code_input="", code_message_id=code_message.message_id)
 
 
 # Обработчик API Hash при состоянии waiting_api_hash (должен быть ПЕРЕД обработчиком прямого ввода)
@@ -633,22 +634,60 @@ async def session_add_code(message: Message, state: FSMContext):
     """Обработка кода авторизации"""
     data = await state.get_data()
     code_input = data.get("code_input", "")
+    code_message_id = data.get("code_message_id")
     
     text = message.text.strip()
+    
+    code_keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
+            [KeyboardButton(text="4"), KeyboardButton(text="5"), KeyboardButton(text="6")],
+            [KeyboardButton(text="7"), KeyboardButton(text="8"), KeyboardButton(text="9")],
+            [KeyboardButton(text="< Стереть"), KeyboardButton(text="0")],
+            [KeyboardButton(text="✅ Отправить")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False
+    )
     
     if text == "< Стереть":
         if code_input:
             code_input = code_input[:-1]
             await state.update_data(code_input=code_input)
-            await message.answer(f"🔑 Введите код: {code_input or '_'}")
+            # Обновляем сообщение с кодом
+            code_display = code_input + ('_' * (5 - len(code_input)))
+            if code_message_id:
+                try:
+                    await message.bot.edit_message_text(
+                        chat_id=message.chat.id,
+                        message_id=code_message_id,
+                        text=f"✅ Код отправлен в Telegram\n\n"
+                             f"🔑 <b>Введите код:</b> {code_display}\n\n"
+                             f"Код пришел в приложении Telegram.\n"
+                             f"Используйте клавиатуру ниже для ввода:",
+                        reply_markup=code_keyboard,
+                        parse_mode=ParseMode.HTML
+                    )
+                except:
+                    pass
         return
     
     if text == "✅ Отправить":
         if not code_input or len(code_input) < 5:
             await message.answer("❌ Код должен содержать минимум 5 цифр")
-        return
+            return
     
-        await message.answer("⏳ Проверяю код...", reply_markup=None)
+        # Удаляем клавиатуру и обновляем сообщение
+        if code_message_id:
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=message.chat.id,
+                    message_id=code_message_id,
+                    text="⏳ Проверяю код...",
+                    parse_mode=ParseMode.HTML
+                )
+            except:
+                pass
         
         success, msg = await session_manager.complete_phone_auth(
             message.from_user.id, code_input
@@ -671,30 +710,83 @@ async def session_add_code(message: Message, state: FSMContext):
             await state.update_data(code=code_input)
         else:
             await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
-            code_keyboard = ReplyKeyboardMarkup(
-                keyboard=[
-                    [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
-                    [KeyboardButton(text="4"), KeyboardButton(text="5"), KeyboardButton(text="6")],
-                    [KeyboardButton(text="7"), KeyboardButton(text="8"), KeyboardButton(text="9")],
-                    [KeyboardButton(text="< Стереть"), KeyboardButton(text="0")],
-                    [KeyboardButton(text="✅ Отправить")]
-                ],
-                resize_keyboard=True,
-                one_time_keyboard=False
-            )
-            await message.answer(
-                "🔑 <b>Введите код снова:</b>",
+            # Отправляем новое сообщение с клавиатурой
+            code_message = await message.answer(
+                "🔑 <b>Введите код снова:</b> _____\n\n"
+                "Код пришел в приложении Telegram.\n"
+                "Используйте клавиатуру ниже для ввода:",
                 reply_markup=code_keyboard,
                 parse_mode=ParseMode.HTML
             )
-            await state.update_data(code_input="")
+            await state.update_data(code_input="", code_message_id=code_message.message_id)
         return
     
     # Добавляем цифру
     if text.isdigit() and len(text) == 1:
         code_input += text
         await state.update_data(code_input=code_input)
-        await message.answer(f"🔑 Введите код: {code_input}{'_' * (5 - len(code_input)) if len(code_input) < 5 else ''}")
+        
+        # Обновляем сообщение с кодом
+        code_display = code_input + ('_' * (5 - len(code_input)))
+        if code_message_id:
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=message.chat.id,
+                    message_id=code_message_id,
+                    text=f"✅ Код отправлен в Telegram\n\n"
+                         f"🔑 <b>Введите код:</b> {code_display}\n\n"
+                         f"Код пришел в приложении Telegram.\n"
+                         f"Используйте клавиатуру ниже для ввода:",
+                    reply_markup=code_keyboard,
+                    parse_mode=ParseMode.HTML
+                )
+            except:
+                pass
+        
+        # Если код введен полностью (5 цифр), автоматически отправляем на проверку
+        if len(code_input) >= 5:
+            # Удаляем клавиатуру и обновляем сообщение
+            if code_message_id:
+                try:
+                    await message.bot.edit_message_text(
+                        chat_id=message.chat.id,
+                        message_id=code_message_id,
+                        text="⏳ Проверяю код...",
+                        parse_mode=ParseMode.HTML
+                    )
+                except:
+                    pass
+            
+            success, msg = await session_manager.complete_phone_auth(
+                message.from_user.id, code_input
+            )
+            
+            if success:
+                await message.answer(
+                    f"{msg}\n\n"
+                    "Теперь вы можете использовать команды для рассылки.",
+                    parse_mode=ParseMode.HTML
+                )
+                await state.clear()
+            elif msg == "NEED_PASSWORD":
+                await message.answer(
+                    "🔐 <b>Требуется пароль двухфакторной аутентификации</b>\n\n"
+                    "Введите пароль:",
+                    parse_mode=ParseMode.HTML
+                )
+                await state.set_state(SessionStates.waiting_password)
+                await state.update_data(code=code_input)
+            else:
+                await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
+                # Отправляем новое сообщение с клавиатурой
+                code_message = await message.answer(
+                    "🔑 <b>Введите код снова:</b> _____\n\n"
+                    "Код пришел в приложении Telegram.\n"
+                    "Используйте клавиатуру ниже для ввода:",
+                    reply_markup=code_keyboard,
+                    parse_mode=ParseMode.HTML
+                )
+                await state.update_data(code_input="", code_message_id=code_message.message_id)
     elif text.isdigit() and len(text) >= 5:
         # Пользователь ввел код целиком
         await message.answer("⏳ Проверяю код...", reply_markup=None)
