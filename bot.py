@@ -166,29 +166,40 @@ async def cmd_start(message: Message):
 @router.message()
 async def session_api_id_direct(message: Message, state: FSMContext):
     """Обработка прямого ввода API ID"""
+    logger.info(f"🔍 session_api_id_direct вызван: user_id={message.from_user.id}, text={message.text}, chat_type={message.chat.type}")
+    
     # Быстрая проверка - если это не текст или команда с точкой, выходим
-    if not message.text or message.text.startswith("."):
+    if not message.text:
+        logger.info("❌ Нет текста, выходим")
+        return
+    
+    if message.text.startswith("."):
+        logger.info("❌ Команда с точкой, выходим")
         return
     
     # Проверяем, что это число из 6+ цифр
-    if not re.match(r'^\d{6,}$', message.text.strip()):
+    text_stripped = message.text.strip()
+    if not re.match(r'^\d{6,}$', text_stripped):
+        logger.info(f"❌ Не число из 6+ цифр: {text_stripped}")
         return
     
     # Проверяем состояние - если есть активное состояние, пропускаем
     # (чтобы не конфликтовать с другими обработчиками)
     current_state = await state.get_state()
+    logger.info(f"🔍 Текущее состояние: {current_state}")
     if current_state:
         # Если есть любое активное состояние, пропускаем
         # (другие обработчики обработают сообщение)
+        logger.info(f"❌ Есть активное состояние {current_state}, пропускаем")
         return
     
     # Всегда отвечаем на число, если нет активного состояния
-    logger.info(f"Обработчик прямого ввода API ID вызван для пользователя {message.from_user.id}, текст: {message.text}")
+    logger.info(f"✅ Обработчик прямого ввода API ID вызван для пользователя {message.from_user.id}, текст: {message.text}")
     try:
-        api_id = int(message.text.strip())
+        api_id = int(text_stripped)
         await state.update_data(api_id=api_id)
         await state.set_state(SessionStates.waiting_api_hash)
-        logger.info(f"API ID {api_id} принят, переходим к API Hash")
+        logger.info(f"✅ API ID {api_id} принят, переходим к API Hash")
         await message.answer(
             f"✅ API ID: <b>{api_id}</b>\n\n"
             "Теперь введите ваш <b>API Hash</b> (строка):",
