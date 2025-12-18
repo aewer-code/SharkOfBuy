@@ -1,6 +1,6 @@
 """
-Упрощенный бот для рассылки сообщений в стиле Garvis
-Только функционал рассылки, без магазина
+Бот для рассылки сообщений в Telegram чаты
+Функционал рассылки с поддержкой сессий
 """
 import asyncio
 import os
@@ -21,6 +21,83 @@ from aiogram.types import (
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from session_manager import session_manager
+
+
+def parse_time_interval(time_str: str) -> float:
+    """
+    Парсит строку времени в секунды
+    Поддерживает форматы: 1ч, 30м, 1ч30м, 1ч30м30с, 2д1ч3м30с
+    """
+    time_str = time_str.lower().strip()
+    total_seconds = 0
+    
+    # Дни
+    days_match = re.search(r'(\d+)д', time_str)
+    if days_match:
+        total_seconds += int(days_match.group(1)) * 86400
+    
+    # Часы
+    hours_match = re.search(r'(\d+)ч', time_str)
+    if hours_match:
+        total_seconds += int(hours_match.group(1)) * 3600
+    
+    # Минуты
+    minutes_match = re.search(r'(\d+)м', time_str)
+    if minutes_match:
+        total_seconds += int(minutes_match.group(1)) * 60
+    
+    # Секунды
+    seconds_match = re.search(r'(\d+)с', time_str)
+    if seconds_match:
+        total_seconds += int(seconds_match.group(1))
+    
+    # Если ничего не найдено, пробуем как число (секунды)
+    if total_seconds == 0:
+        try:
+            total_seconds = float(time_str)
+        except ValueError:
+            total_seconds = 60  # По умолчанию
+    
+    return total_seconds
+
+
+def format_time_interval(seconds: float) -> str:
+    """Форматирует секунды в читаемый формат"""
+    seconds = int(seconds)
+    
+    if seconds < 60:
+        return f"{seconds} сек"
+    elif seconds < 3600:
+        minutes = seconds // 60
+        secs = seconds % 60
+        if secs > 0:
+            return f"{minutes}м {secs}с"
+        return f"{minutes}м"
+    elif seconds < 86400:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        parts = []
+        if hours > 0:
+            parts.append(f"{hours}ч")
+        if minutes > 0:
+            parts.append(f"{minutes}м")
+        if secs > 0 and len(parts) < 2:
+            parts.append(f"{secs}с")
+        return " ".join(parts) if parts else "0"
+    else:
+        days = seconds // 86400
+        hours = (seconds % 86400) // 3600
+        minutes = (seconds % 86400 % 3600) // 60
+        parts = []
+        if days > 0:
+            parts.append(f"{days}д")
+        if hours > 0:
+            parts.append(f"{hours}ч")
+        if minutes > 0:
+            parts.append(f"{minutes}м")
+        return " ".join(parts) if parts else "0"
+
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -60,7 +137,7 @@ router = Router()
 # ============= ОБРАБОТЧИКИ =============
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    """Стартовое сообщение в стиле Garvis"""
+    """Стартовое сообщение"""
     user_id = message.from_user.id
     session_data = session_manager.get_user_session(user_id)
     
@@ -84,7 +161,7 @@ async def cmd_start(message: Message):
     await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
-# Обработчик команд с префиксом точки (стиль Garvis)
+# Обработчик команд с префиксом точки
 @router.message(F.text.startswith("."))
 async def handle_dot_command(message: Message, state: FSMContext):
     """Обработка команд с префиксом точки"""
@@ -119,11 +196,15 @@ async def handle_dot_command(message: Message, state: FSMContext):
         try:
             msg_text = args[0].strip("'\"")
             count = int(args[1])
-            delay = float(args[2])
+            # Парсим интервал (поддержка форматов: секунды, 1ч, 30м, 1ч30м)
+            try:
+                delay = float(args[2])
+            except ValueError:
+                delay = parse_time_interval(args[2])
         except:
             await message.answer("❌ Неверный формат аргументов")
             return
-        
+
         # Получаем ID текущего чата (если это не личка)
         if message.chat.type == "private":
             await message.answer("❌ Эта команда работает только в чатах")
@@ -131,7 +212,8 @@ async def handle_dot_command(message: Message, state: FSMContext):
         
         chat_id = message.chat.id
         
-        await message.answer(f"⏳ Начинаю рассылку: {count} сообщений с интервалом {delay} сек...")
+        delay_display = format_time_interval(delay)
+        await message.answer(f"⏳ Начинаю рассылку: {count} сообщений с интервалом {delay_display}...")
         
         success = 0
         failed = 0
@@ -158,10 +240,14 @@ async def handle_dot_command(message: Message, state: FSMContext):
             "📋 <b>Доступные команды:</b>\n\n"
             "<code>.спам 'текст' количество интервал</code> - Рассылка в текущий чат\n"
             "<code>.чаты</code> - Загрузить список чатов из .txt файла\n"
-            "<code>.рассылка 'текст'</code> - Рассылка по всем чатам из списка\n\n"
+            "<code>.рассылка 'текст' интервал</code> - Рассылка по всем чатам из списка\n\n"
+            "<b>Форматы интервала:</b>\n"
+            "• Секунды: <code>60</code>, <code>3600</code>\n"
+            "• Время: <code>1ч</code>, <code>30м</code>, <code>1ч30м</code>, <code>2д1ч</code>\n\n"
+            "💡 <b>Важно:</b> Интервал обязателен для рассылки!\n"
             "💡 Все команды работают с префиксом точки",
-            parse_mode=ParseMode.HTML
-        )
+                parse_mode=ParseMode.HTML
+            )
     
     # Команда .чаты
     elif command in [".чаты", ".chats"]:
@@ -177,15 +263,40 @@ async def handle_dot_command(message: Message, state: FSMContext):
     
     # Команда .рассылка
     elif command in [".рассылка", ".broadcast", ".рассыл"]:
-        if not args:
+        if not args or len(args) < 2:
             await message.answer(
                 "❌ <b>Использование:</b>\n"
-                "<code>.рассылка 'текст сообщения'</code>",
+                "<code>.рассылка 'текст сообщения' интервал</code>\n\n"
+                "Примеры:\n"
+                "<code>.рассылка 'Привет' 60</code> - интервал 60 секунд\n"
+                "<code>.рассылка 'Привет' 1ч</code> - интервал 1 час\n"
+                "<code>.рассылка 'Привет' 30м</code> - интервал 30 минут\n"
+                "<code>.рассылка 'Привет' 1ч30м</code> - интервал 1 час 30 минут",
                 parse_mode=ParseMode.HTML
             )
             return
         
-        msg_text = " ".join(args).strip("'\"")
+        # Парсим аргументы: текст и интервал
+        # Последний аргумент - интервал, остальное - текст
+        # Последний аргумент - интервал
+        delay_str = args[-1]
+        # Все остальное - текст сообщения
+        msg_text = " ".join(args[:-1]).strip("'\"")
+        
+        # Если текст пустой, берем весь текст без последнего аргумента
+        if not msg_text:
+            msg_text = " ".join(args[:-1])
+        
+        # Парсим интервал (поддержка форматов: секунды, 1ч, 30м, 1ч30м)
+        try:
+            # Пробуем как число (секунды)
+            delay_seconds = float(delay_str)
+        except ValueError:
+            # Парсим формат времени (1ч, 30м, 1ч30м)
+            delay_seconds = parse_time_interval(delay_str)
+        
+        if delay_seconds < 1:
+            delay_seconds = 60  # Минимум 1 секунда
         
         # Получаем список чатов из сохраненного файла
         if not hasattr(message.bot, "_user_chats"):
@@ -194,7 +305,7 @@ async def handle_dot_command(message: Message, state: FSMContext):
         if user_id not in message.bot._user_chats:
             await message.answer("❌ Сначала загрузите список чатов через .чаты")
             return
-        
+    
         chat_usernames = message.bot._user_chats[user_id]
         chat_ids = await session_manager.get_chat_ids_from_usernames(user_id, chat_usernames)
         
@@ -202,16 +313,23 @@ async def handle_dot_command(message: Message, state: FSMContext):
             await message.answer("❌ Не удалось получить ID чатов")
             return
         
-        await message.answer(f"⏳ Отправляю сообщение в {len(chat_ids)} чатов...")
+        # Форматируем интервал для отображения
+        delay_display = format_time_interval(delay_seconds)
+        
+        await message.answer(
+            f"⏳ Отправляю сообщение в {len(chat_ids)} чатов...\n"
+            f"⏱ Интервал между сообщениями: {delay_display}"
+        )
         
         success, failed, errors = await session_manager.send_message_to_chats(
-            user_id, msg_text, chat_ids, delay=1.0
+            user_id, msg_text, chat_ids, delay=delay_seconds
         )
         
         result = (
             f"✅ <b>Рассылка завершена!</b>\n\n"
             f"✅ Успешно: {success}\n"
-            f"❌ Ошибок: {failed}"
+            f"❌ Ошибок: {failed}\n"
+            f"⏱ Интервал: {delay_display}"
         )
         
         if errors and len(errors) <= 5:
@@ -221,7 +339,7 @@ async def handle_dot_command(message: Message, state: FSMContext):
 
 
 # Обработка загрузки файла со списком чатов
-@router.message((F.document & F.document.file_name.endswith('.txt')) | StateFilter(SessionStates.waiting_chats_file))
+@router.message(F.document & F.document.file_name.endswith('.txt'))
 async def handle_chats_file(message: Message, state: FSMContext):
     """Обработка загрузки .txt файла со списком чатов"""
     user_id = message.from_user.id
@@ -279,12 +397,14 @@ async def handle_chats_file(message: Message, state: FSMContext):
         await state.clear()
 
 
-# Обработчик прямого ввода API ID
+# Обработчик прямого ввода API ID (если не в процессе другой операции)
 @router.message(F.text.regexp(r'^\d{6,}$'))
 async def session_api_id_direct(message: Message, state: FSMContext):
     """Обработка прямого ввода API ID"""
     current_state = await state.get_state()
-    if current_state:
+    
+    # Если уже в процессе добавления сессии, пропускаем
+    if current_state and current_state not in [None, ""]:
         return
     
     try:
@@ -305,8 +425,8 @@ async def session_api_id_direct(message: Message, state: FSMContext):
 async def session_add_start(callback: CallbackQuery, state: FSMContext):
     """Начало добавления сессии"""
     await callback.message.edit_text(
-        "🤖 <b>Garvis необходимо выполнить подключение к аккаунту.</b>\n\n"
-        "Для этого бот должен авторизоваться в ваш аккаунт.\n\n"
+        "🤖 <b>Подключение аккаунта</b>\n\n"
+        "Для работы бота необходимо авторизоваться в ваш аккаунт Telegram.\n\n"
         "📋 <b>Настройки авторизации:</b>\n"
         "Для начала введите ваш <b>API ID</b> (число):\n\n"
         "💡 Получить можно на https://my.telegram.org/apps",
@@ -400,12 +520,12 @@ async def session_add_phone(message: Message, state: FSMContext):
         await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
         await state.clear()
         return
-    
+
     if "Уже авторизован" in msg:
         await message.answer(msg, parse_mode=ParseMode.HTML)
         await state.clear()
         return
-    
+
     code_keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
@@ -449,8 +569,8 @@ async def session_add_code(message: Message, state: FSMContext):
     if text == "✅ Отправить":
         if not code_input or len(code_input) < 5:
             await message.answer("❌ Код должен содержать минимум 5 цифр")
-            return
-        
+        return
+    
         await message.answer("⏳ Проверяю код...", reply_markup=None)
         
         success, msg = await session_manager.complete_phone_auth(
@@ -493,11 +613,13 @@ async def session_add_code(message: Message, state: FSMContext):
             await state.update_data(code_input="")
         return
     
+    # Добавляем цифру
     if text.isdigit() and len(text) == 1:
         code_input += text
         await state.update_data(code_input=code_input)
         await message.answer(f"🔑 Введите код: {code_input}{'_' * (5 - len(code_input)) if len(code_input) < 5 else ''}")
     elif text.isdigit() and len(text) >= 5:
+        # Пользователь ввел код целиком
         await message.answer("⏳ Проверяю код...", reply_markup=None)
         
         success, msg = await session_manager.complete_phone_auth(
