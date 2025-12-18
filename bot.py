@@ -324,7 +324,188 @@ async def session_add_api_id(message: Message, state: FSMContext):
         await message.answer("❌ API ID должен быть числом. Введите снова:")
 
 
-# Обработчик прямого ввода API ID (должен быть ПЕРЕД обработчиком команд)
+# Обработчик команд с префиксом точки (должен быть ПЕРЕД обработчиком прямого ввода)
+@router.message(F.text.startswith("."))
+async def handle_dot_command(message: Message, state: FSMContext):
+    """Обработка команд с префиксом точки"""
+    logger.info(f"🔍 handle_dot_command вызван: user_id={message.from_user.id}, text={message.text}")
+    
+    text = message.text.strip()
+    command = text.split()[0].lower() if text.split() else ""
+    args = text.split()[1:] if len(text.split()) > 1 else []
+    
+    user_id = message.from_user.id
+    
+    # Проверяем наличие сессии
+    session_data = session_manager.get_user_session(user_id)
+    if not session_data and command not in [".команды", ".помощь", ".help"]:
+        await message.answer(
+            "❌ Сначала подключите аккаунт через /start",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Команда .спам
+    if command in [".спам", ".spam", ".флуд", ".flood"]:
+        logger.info(f"🔍 Команда .спам: args={args}")
+        if len(args) < 3:
+            await message.answer(
+                "❌ <b>Использование:</b>\n"
+                "<code>.спам 'сообщение' 'количество' 'интервал'</code>\n\n"
+                "Пример: <code>.спам 'Привет' 10 5</code>\n"
+                "Отправит 'Привет' 10 раз с интервалом 5 секунд",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        
+        # Парсим аргументы
+        try:
+            msg_text = args[0].strip("'\"")
+            count = int(args[1])
+            # Парсим интервал (поддержка форматов: секунды, 1ч, 30м, 1ч30м)
+            try:
+                delay = float(args[2])
+            except ValueError:
+                delay = parse_time_interval(args[2])
+        except:
+            await message.answer("❌ Неверный формат аргументов")
+            return
+
+        # Получаем ID текущего чата
+        chat_id = message.chat.id
+        
+        delay_display = format_time_interval(delay)
+        await message.answer(f"⏳ Начинаю рассылку: {count} сообщений с интервалом {delay_display}...")
+        
+        success = 0
+        failed = 0
+        
+        for i in range(count):
+            try:
+                await message.bot.send_message(chat_id, msg_text)
+                success += 1
+                await asyncio.sleep(delay)
+            except Exception as e:
+                failed += 1
+                logger.error(f"Ошибка отправки: {e}")
+        
+        await message.answer(
+            f"✅ <b>Рассылка завершена!</b>\n\n"
+            f"✅ Успешно: {success}\n"
+            f"❌ Ошибок: {failed}",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Команда .команды
+    if command in [".команды", ".помощь", ".help", ".commands"]:
+        await message.answer(
+            "📋 <b>Доступные команды:</b>\n\n"
+            "<code>.спам 'текст' количество интервал</code> - Рассылка в текущий чат\n"
+            "<code>.чаты</code> - Загрузить список чатов из .txt файла\n"
+            "<code>.рассылка 'текст' интервал</code> - Рассылка по всем чатам из списка\n\n"
+            "<b>Форматы интервала:</b>\n"
+            "• Секунды: <code>60</code>, <code>3600</code>\n"
+            "• Время: <code>1ч</code>, <code>30м</code>, <code>1ч30м</code>, <code>2д1ч</code>\n\n"
+            "💡 <b>Важно:</b> Интервал обязателен для рассылки!\n"
+            "💡 Все команды работают с префиксом точки",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Команда .чаты
+    if command in [".чаты", ".chats"]:
+        await message.answer(
+            "📋 <b>Загрузка списка чатов</b>\n\n"
+            "Отправьте .txt файл со списком ссылок на чаты.\n"
+            "Формат:\n"
+            "<code>https://t.me/reklamnyy_chat\n"
+            "https://t.me/piarchattttt</code>",
+            parse_mode=ParseMode.HTML
+        )
+        await state.set_state(SessionStates.waiting_chats_file)
+        return
+    
+    # Команда .рассылка
+    if command in [".рассылка", ".broadcast", ".рассыл"]:
+        if not args or len(args) < 2:
+            await message.answer(
+                "❌ <b>Использование:</b>\n"
+                "<code>.рассылка 'текст сообщения' интервал</code>\n\n"
+                "Примеры:\n"
+                "<code>.рассылка 'Привет' 60</code> - интервал 60 секунд\n"
+                "<code>.рассылка 'Привет' 1ч</code> - интервал 1 час\n"
+                "<code>.рассылка 'Привет' 30м</code> - интервал 30 минут\n"
+                "<code>.рассылка 'Привет' 1ч30м</code> - интервал 1 час 30 минут",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        
+        # Парсим аргументы: текст и интервал
+        # Последний аргумент - интервал, остальное - текст
+        # Последний аргумент - интервал
+        delay_str = args[-1]
+        # Все остальное - текст сообщения
+        msg_text = " ".join(args[:-1]).strip("'\"")
+        
+        # Если текст пустой, берем весь текст без последнего аргумента
+        if not msg_text:
+            msg_text = " ".join(args[:-1])
+        
+        # Парсим интервал (поддержка форматов: секунды, 1ч, 30м, 1ч30м)
+        try:
+            # Пробуем как число (секунды)
+            delay_seconds = float(delay_str)
+        except ValueError:
+            # Парсим формат времени (1ч, 30м, 1ч30м)
+            delay_seconds = parse_time_interval(delay_str)
+        
+        if delay_seconds < 1:
+            delay_seconds = 60  # Минимум 1 секунда
+        
+        # Получаем список чатов из сохраненного файла
+        if not hasattr(message.bot, "_user_chats"):
+            message.bot._user_chats = {}
+        
+        if user_id not in message.bot._user_chats:
+            await message.answer("❌ Сначала загрузите список чатов через .чаты")
+            return
+        
+        chat_usernames = message.bot._user_chats[user_id]
+        chat_ids = await session_manager.get_chat_ids_from_usernames(user_id, chat_usernames)
+        
+        if not chat_ids:
+            await message.answer("❌ Не удалось получить ID чатов")
+            return
+        
+        # Форматируем интервал для отображения
+        delay_display = format_time_interval(delay_seconds)
+        
+        await message.answer(
+            f"⏳ Отправляю сообщение в {len(chat_ids)} чатов...\n"
+            f"⏱ Интервал между сообщениями: {delay_display}"
+        )
+        
+        success, failed, errors = await session_manager.send_message_to_chats(
+            user_id, msg_text, chat_ids, delay=delay_seconds
+        )
+        
+        result = (
+            f"✅ <b>Рассылка завершена!</b>\n\n"
+            f"✅ Успешно: {success}\n"
+            f"❌ Ошибок: {failed}\n"
+            f"⏱ Интервал: {delay_display}"
+        )
+        
+        if errors and len(errors) <= 5:
+            result += "\n\n<b>Ошибки:</b>\n" + "\n".join(errors[:5])
+        
+        await message.answer(result, parse_mode=ParseMode.HTML)
+        await state.clear()
+        return
+
+
+# Обработчик прямого ввода API ID (должен быть ПОСЛЕ обработчика команд)
 # Этот обработчик срабатывает только если нет активного состояния
 # Проверяем состояние внутри обработчика, чтобы не конфликтовать с другими
 @router.message()
@@ -381,183 +562,6 @@ async def session_api_id_direct(message: Message, state: FSMContext):
     except ValueError as e:
         logger.error(f"Ошибка парсинга API ID: {e}")
         pass
-
-
-# Обработчик команд с префиксом точки
-@router.message(F.text.startswith("."))
-async def handle_dot_command(message: Message, state: FSMContext):
-    """Обработка команд с префиксом точки"""
-    text = message.text.strip()
-    command = text.split()[0].lower() if text.split() else ""
-    args = text.split()[1:] if len(text.split()) > 1 else []
-    
-    user_id = message.from_user.id
-    
-    # Проверяем наличие сессии
-    session_data = session_manager.get_user_session(user_id)
-    if not session_data and command not in [".команды", ".помощь", ".help"]:
-        await message.answer(
-            "❌ Сначала подключите аккаунт через /start",
-            parse_mode=ParseMode.HTML
-        )
-        return
-    
-    # Команда .спам
-    if command in [".спам", ".spam", ".флуд", ".flood"]:
-        if len(args) < 3:
-            await message.answer(
-                "❌ <b>Использование:</b>\n"
-                "<code>.спам 'сообщение' 'количество' 'интервал'</code>\n\n"
-                "Пример: <code>.спам 'Привет' 10 5</code>\n"
-                "Отправит 'Привет' 10 раз с интервалом 5 секунд",
-                parse_mode=ParseMode.HTML
-            )
-            return
-        
-        # Парсим аргументы
-        try:
-            msg_text = args[0].strip("'\"")
-            count = int(args[1])
-            # Парсим интервал (поддержка форматов: секунды, 1ч, 30м, 1ч30м)
-            try:
-                delay = float(args[2])
-            except ValueError:
-                delay = parse_time_interval(args[2])
-        except:
-            await message.answer("❌ Неверный формат аргументов")
-            return
-
-        # Получаем ID текущего чата (если это не личка)
-        if message.chat.type == "private":
-            await message.answer("❌ Эта команда работает только в чатах")
-            return
-        
-        chat_id = message.chat.id
-        
-        delay_display = format_time_interval(delay)
-        await message.answer(f"⏳ Начинаю рассылку: {count} сообщений с интервалом {delay_display}...")
-        
-        success = 0
-        failed = 0
-        
-        for i in range(count):
-            try:
-                await message.bot.send_message(chat_id, msg_text)
-                success += 1
-                await asyncio.sleep(delay)
-            except Exception as e:
-                failed += 1
-                logger.error(f"Ошибка отправки: {e}")
-        
-        await message.answer(
-            f"✅ <b>Рассылка завершена!</b>\n\n"
-            f"✅ Успешно: {success}\n"
-            f"❌ Ошибок: {failed}",
-            parse_mode=ParseMode.HTML
-        )
-    
-    # Команда .команды
-    elif command in [".команды", ".commands", ".помощь", ".help", ".кмд"]:
-        await message.answer(
-            "📋 <b>Доступные команды:</b>\n\n"
-            "<code>.спам 'текст' количество интервал</code> - Рассылка в текущий чат\n"
-            "<code>.чаты</code> - Загрузить список чатов из .txt файла\n"
-            "<code>.рассылка 'текст' интервал</code> - Рассылка по всем чатам из списка\n\n"
-            "<b>Форматы интервала:</b>\n"
-            "• Секунды: <code>60</code>, <code>3600</code>\n"
-            "• Время: <code>1ч</code>, <code>30м</code>, <code>1ч30м</code>, <code>2д1ч</code>\n\n"
-            "💡 <b>Важно:</b> Интервал обязателен для рассылки!\n"
-            "💡 Все команды работают с префиксом точки",
-                parse_mode=ParseMode.HTML
-            )
-    
-    # Команда .чаты
-    elif command in [".чаты", ".chats"]:
-        await message.answer(
-            "📋 <b>Загрузка списка чатов</b>\n\n"
-            "Отправьте .txt файл со списком ссылок на чаты.\n"
-            "Формат:\n"
-            "<code>https://t.me/reklamnyy_chat\n"
-            "https://t.me/piarchattttt</code>",
-            parse_mode=ParseMode.HTML
-        )
-        await state.set_state(SessionStates.waiting_chats_file)
-    
-    # Команда .рассылка
-    elif command in [".рассылка", ".broadcast", ".рассыл"]:
-        if not args or len(args) < 2:
-            await message.answer(
-                "❌ <b>Использование:</b>\n"
-                "<code>.рассылка 'текст сообщения' интервал</code>\n\n"
-                "Примеры:\n"
-                "<code>.рассылка 'Привет' 60</code> - интервал 60 секунд\n"
-                "<code>.рассылка 'Привет' 1ч</code> - интервал 1 час\n"
-                "<code>.рассылка 'Привет' 30м</code> - интервал 30 минут\n"
-                "<code>.рассылка 'Привет' 1ч30м</code> - интервал 1 час 30 минут",
-                parse_mode=ParseMode.HTML
-            )
-            return
-        
-        # Парсим аргументы: текст и интервал
-        # Последний аргумент - интервал, остальное - текст
-        # Последний аргумент - интервал
-        delay_str = args[-1]
-        # Все остальное - текст сообщения
-        msg_text = " ".join(args[:-1]).strip("'\"")
-        
-        # Если текст пустой, берем весь текст без последнего аргумента
-        if not msg_text:
-            msg_text = " ".join(args[:-1])
-        
-        # Парсим интервал (поддержка форматов: секунды, 1ч, 30м, 1ч30м)
-        try:
-            # Пробуем как число (секунды)
-            delay_seconds = float(delay_str)
-        except ValueError:
-            # Парсим формат времени (1ч, 30м, 1ч30м)
-            delay_seconds = parse_time_interval(delay_str)
-        
-        if delay_seconds < 1:
-            delay_seconds = 60  # Минимум 1 секунда
-        
-        # Получаем список чатов из сохраненного файла
-        if not hasattr(message.bot, "_user_chats"):
-            message.bot._user_chats = {}
-        
-        if user_id not in message.bot._user_chats:
-            await message.answer("❌ Сначала загрузите список чатов через .чаты")
-            return
-    
-        chat_usernames = message.bot._user_chats[user_id]
-        chat_ids = await session_manager.get_chat_ids_from_usernames(user_id, chat_usernames)
-        
-        if not chat_ids:
-            await message.answer("❌ Не удалось получить ID чатов")
-            return
-        
-        # Форматируем интервал для отображения
-        delay_display = format_time_interval(delay_seconds)
-        
-        await message.answer(
-            f"⏳ Отправляю сообщение в {len(chat_ids)} чатов...\n"
-            f"⏱ Интервал между сообщениями: {delay_display}"
-        )
-        
-        success, failed, errors = await session_manager.send_message_to_chats(
-            user_id, msg_text, chat_ids, delay=delay_seconds
-        )
-        
-        result = (
-            f"✅ <b>Рассылка завершена!</b>\n\n"
-            f"✅ Успешно: {success}\n"
-            f"❌ Ошибок: {failed}\n"
-            f"⏱ Интервал: {delay_display}"
-        )
-        
-        if errors and len(errors) <= 5:
-            result += "\n\n<b>Ошибки:</b>\n" + "\n".join(errors[:5])
-        
-        await message.answer(result, parse_mode=ParseMode.HTML)
 
 
 # Обработка загрузки файла со списком чатов
