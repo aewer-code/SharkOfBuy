@@ -22,6 +22,7 @@ from aiogram.types import (
 from aiogram.enums import ChatMemberStatus
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from session_manager import session_manager
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -415,6 +416,15 @@ class AdminStates(StatesGroup):
     waiting_create_promo_amount = State()
     waiting_create_promo_uses = State()
     waiting_broadcast_button = State()
+
+
+class SessionStates(StatesGroup):
+    waiting_session_name = State()
+    waiting_api_id = State()
+    waiting_api_hash = State()
+    waiting_session_file = State()
+    waiting_message_text = State()
+    waiting_chat_selection = State()
 
 
 # ============= КЛАВИАТУРЫ =============
@@ -1397,8 +1407,8 @@ async def process_apply_promo(callback: CallbackQuery, state: FSMContext):
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="❌ Отмена", callback_data=f"cancel_promo_{product_id}_{quantity}")]
             ]),
-            parse_mode=ParseMode.HTML
-        )
+                parse_mode=ParseMode.HTML
+            )
         await state.set_state(BuyStates.waiting_promo_code)
         await callback.answer()
     except Exception as e:
@@ -1712,16 +1722,27 @@ async def process_pay_with_crypto(callback: CallbackQuery):
         }
         db.save()
         
+        # Генерируем номер заказа в формате INV + invoice_id
+        order_number = f"INV{invoice_id}"
+        # Формат для заголовка: INV_3_20251217142828 (разделяем invoice_id)
+        invoice_id_str = str(invoice_id)
+        order_title = f"INV_{invoice_id_str}"
+        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить через CryptoBot", url=invoice_url)]
+            [
+                InlineKeyboardButton(text="💳 Оплатить", url=invoice_url),
+                InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_crypto_{invoice_id}")
+            ]
         ])
         
-        await callback.message.answer(
-            f"💳 <b>Оплата через CryptoBot</b>\n\n"
-            f"Товар: {product['name']}\n"
-            f"Количество: {quantity} шт.\n"
-            f"Сумма: {usdt_amount:.2f} USDT\n\n"
-            f"Нажмите кнопку ниже для оплаты:",
+        await callback.message.edit_text(
+            f"Заказ #{order_title}\n\n"
+            f"Товар: {product['name']} x{quantity}\n"
+            f"Сумма: {usdt_amount:.2f} USDT\n"
+            f"Время на оплату: 15 минут\n\n"
+            f"Оплатите счет через кнопку ниже\n"
+            f"После оплаты нажмите 'Проверить оплату'\n\n"
+            f"Номер заказа: {order_number}",
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML
         )
@@ -1729,6 +1750,44 @@ async def process_pay_with_crypto(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Ошибка оплаты через CryptoBot: {e}")
         await callback.answer("❌ Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("check_crypto_"))
+async def check_crypto_payment_callback(callback: CallbackQuery):
+    """Проверка оплаты CryptoBot по кнопке"""
+    try:
+        invoice_id_str = callback.data.replace("check_crypto_", "")
+        invoice_id = int(invoice_id_str)
+        
+        # Проверяем статус инвойса
+        invoice_status = await check_cryptobot_invoice_status(invoice_id)
+        
+        if not invoice_status:
+            await callback.answer("❌ Инвойс не найден", show_alert=True)
+            return
+        
+        status = invoice_status.get("status", "unknown")
+        
+        if status == "paid":
+            # Платеж уже оплачен, но возможно еще не обработан
+            await callback.answer("✅ Платеж успешно оплачен! Ожидайте получения товара.", show_alert=True)
+            
+            # Проверяем, обработан ли платеж
+            if "crypto_invoices" in db.data and invoice_id_str in db.data["crypto_invoices"]:
+                invoice_data = db.data["crypto_invoices"][invoice_id_str]
+                if invoice_data.get("status") == "pending":
+                    # Если еще не обработан, обрабатываем сейчас
+                    await process_crypto_payment_success(callback.bot, invoice_id, invoice_data)
+        elif status == "active":
+            await callback.answer("⏳ Платеж еще не оплачен. Оплатите и попробуйте снова.", show_alert=True)
+        else:
+            await callback.answer(f"❌ Статус платежа: {status}", show_alert=True)
+            
+    except ValueError:
+        await callback.answer("❌ Ошибка формата", show_alert=True)
+    except Exception as e:
+        logger.error(f"Ошибка проверки оплаты: {e}")
+        await callback.answer("❌ Ошибка при проверке", show_alert=True)
 
 
 @router.message(Command("cryptobot_webhook"))
@@ -2189,7 +2248,7 @@ async def process_successful_payment(message: Message):
                 status="completed",
                 quantity=quantity
             )
-            
+
         # Уменьшаем остаток товара на quantity
         for _ in range(quantity):
             db.decrease_stock(product_id)
@@ -3377,6 +3436,465 @@ async def admin_back(callback: CallbackQuery):
     await callback.answer()
 
 
+# ============= УПРАВЛЕНИЕ СЕССИЯМИ TELEGRAM =============
+@router.message(Command("sessions"))
+async def cmd_sessions(message: Message):
+    """Управление сессиями Telegram"""
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Доступ запрещен")
+        return
+    
+    sessions = session_manager.list_sessions()
+    
+    if not sessions:
+        text = "📱 <b>Управление сессиями</b>\n\nНет добавленных сессий.\n\nИспользуйте /add_session для добавления новой сессии."
+    else:
+        text = "📱 <b>Управление сессиями</b>\n\n"
+        for i, session in enumerate(sessions, 1):
+            status = "🟢 Активна" if session["is_active"] else "🔴 Неактивна"
+            text += f"{i}. <b>{session['name']}</b> {status}\n"
+            text += f"   👤 @{session['username']} ({session['phone']})\n\n"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить сессию", callback_data="session_add")],
+        [InlineKeyboardButton(text="🗑 Удалить сессию", callback_data="session_remove")],
+        [InlineKeyboardButton(text="📋 Список чатов", callback_data="session_chats")],
+        [InlineKeyboardButton(text="📤 Рассылка", callback_data="session_broadcast")]
+    ])
+    
+    await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+
+@router.callback_query(F.data == "session_add")
+async def session_add_start(callback: CallbackQuery, state: FSMContext):
+    """Начало добавления сессии"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    await callback.message.edit_text(
+        "➕ <b>Добавление сессии</b>\n\n"
+        "Введите имя для сессии (например: my_account):",
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(SessionStates.waiting_session_name)
+    await callback.answer()
+
+
+@router.message(StateFilter(SessionStates.waiting_session_name))
+async def session_add_name(message: Message, state: FSMContext):
+    """Обработка имени сессии"""
+    session_name = message.text.strip()
+    
+    if session_name in session_manager.sessions_data:
+        await message.answer("❌ Сессия с таким именем уже существует. Введите другое имя:")
+        return
+    
+    await state.update_data(session_name=session_name)
+    await state.set_state(SessionStates.waiting_api_id)
+    await message.answer(
+        f"✅ Имя сессии: <b>{session_name}</b>\n\n"
+        "Теперь введите API ID (число):",
+        parse_mode=ParseMode.HTML
+    )
+
+
+@router.message(StateFilter(SessionStates.waiting_api_id))
+async def session_add_api_id(message: Message, state: FSMContext):
+    """Обработка API ID"""
+    try:
+        api_id = int(message.text.strip())
+        await state.update_data(api_id=api_id)
+        await state.set_state(SessionStates.waiting_api_hash)
+        await message.answer(
+            f"✅ API ID: <b>{api_id}</b>\n\n"
+            "Теперь введите API Hash (строка):",
+            parse_mode=ParseMode.HTML
+        )
+    except ValueError:
+        await message.answer("❌ API ID должен быть числом. Введите снова:")
+
+
+@router.message(StateFilter(SessionStates.waiting_api_hash))
+async def session_add_api_hash(message: Message, state: FSMContext):
+    """Обработка API Hash"""
+    api_hash = message.text.strip()
+    await state.update_data(api_hash=api_hash)
+    await state.set_state(SessionStates.waiting_session_file)
+    await message.answer(
+        f"✅ API Hash: <b>{api_hash}</b>\n\n"
+        "Теперь отправьте файл сессии (.session):",
+        parse_mode=ParseMode.HTML
+    )
+
+
+@router.message(StateFilter(SessionStates.waiting_session_file), F.document)
+async def session_add_file(message: Message, state: FSMContext):
+    """Обработка файла сессии"""
+    try:
+        data = await state.get_data()
+        session_name = data["session_name"]
+        api_id = data["api_id"]
+        api_hash = data["api_hash"]
+        
+        # Скачиваем файл
+        file = await message.bot.get_file(message.document.file_id)
+        file_path = os.path.join("sessions", f"{session_name}.session")
+        
+        # Создаем директорию если её нет
+        os.makedirs("sessions", exist_ok=True)
+        
+        # Скачиваем файл
+        await message.bot.download_file(file.file_path, file_path)
+        
+        await message.answer("⏳ Подключаюсь к сессии...")
+        
+        # Добавляем сессию
+        success, msg = await session_manager.add_session(
+            session_name, api_id, api_hash, file_path
+        )
+        
+        if success:
+            await message.answer(
+                f"✅ <b>Сессия успешно добавлена!</b>\n\n{msg}",
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await message.answer(
+                f"❌ <b>Ошибка добавления сессии:</b>\n\n{msg}",
+                parse_mode=ParseMode.HTML
+            )
+        
+        await state.clear()
+        
+    except Exception as e:
+        logger.error(f"Ошибка добавления сессии: {e}")
+        await message.answer(f"❌ Ошибка: {str(e)}")
+        await state.clear()
+
+
+@router.callback_query(F.data == "session_remove")
+async def session_remove_start(callback: CallbackQuery):
+    """Удаление сессии"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    sessions = session_manager.list_sessions()
+    
+    if not sessions:
+        await callback.answer("Нет сессий для удаления", show_alert=True)
+        return
+    
+    keyboard = []
+    for session in sessions:
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"🗑 {session['name']}",
+                callback_data=f"session_delete_{session['name']}"
+            )
+        ])
+    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="sessions_back")])
+    
+    await callback.message.edit_text(
+        "🗑 <b>Удаление сессии</b>\n\nВыберите сессию для удаления:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        parse_mode=ParseMode.HTML
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("session_delete_"))
+async def session_remove_confirm(callback: CallbackQuery):
+    """Подтверждение удаления сессии"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    session_name = callback.data.replace("session_delete_", "")
+    
+    success, msg = await session_manager.remove_session(session_name)
+    
+    if success:
+        await callback.message.edit_text(
+            f"✅ <b>Сессия удалена!</b>\n\n{msg}",
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка:</b>\n\n{msg}",
+            parse_mode=ParseMode.HTML
+        )
+    
+    await callback.answer()
+
+
+@router.callback_query(F.data == "session_chats")
+async def session_chats_start(callback: CallbackQuery):
+    """Сканирование чатов"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    sessions = session_manager.list_sessions()
+    
+    if not sessions:
+        await callback.answer("Нет сессий", show_alert=True)
+        return
+    
+    keyboard = []
+    for session in sessions:
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"📋 {session['name']}",
+                callback_data=f"session_scan_{session['name']}"
+            )
+        ])
+    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="sessions_back")])
+    
+    await callback.message.edit_text(
+        "📋 <b>Сканирование чатов</b>\n\nВыберите сессию:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        parse_mode=ParseMode.HTML
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("session_scan_"))
+async def session_chats_scan(callback: CallbackQuery):
+    """Сканирование чатов выбранной сессии"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    session_name = callback.data.replace("session_scan_", "")
+    
+    await callback.message.edit_text("⏳ Сканирую чаты...")
+    await callback.answer()
+    
+    success, msg, chats = await session_manager.get_chats(session_name, limit=200)
+    
+    if not success:
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка:</b>\n\n{msg}",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Сохраняем чаты во временное хранилище
+    if not hasattr(callback.bot, "_session_chats"):
+        callback.bot._session_chats = {}
+    callback.bot._session_chats[callback.from_user.id] = {
+        "session_name": session_name,
+        "chats": chats
+    }
+    
+    # Формируем список чатов
+    text = f"📋 <b>Чаты сессии {session_name}</b>\n\n{msg}\n\n"
+    text += "Выберите чаты для рассылки (можно несколько):\n\n"
+    
+    keyboard = []
+    for i, chat in enumerate(chats[:50]):  # Показываем первые 50
+        chat_type_emoji = "📢" if chat["type"] == "channel" else ("👥" if chat["type"] == "group" else "👤")
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"{chat_type_emoji} {chat['title'][:30]}",
+                callback_data=f"chat_select_{i}"
+            )
+        ])
+    
+    if len(chats) > 50:
+        text += f"\n⚠️ Показано 50 из {len(chats)} чатов"
+    
+    keyboard.append([InlineKeyboardButton(text="✅ Выбрать все", callback_data="chat_select_all")])
+    keyboard.append([InlineKeyboardButton(text="📤 Начать рассылку", callback_data="session_start_broadcast")])
+    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="sessions_back")])
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        parse_mode=ParseMode.HTML
+    )
+
+
+@router.callback_query(F.data.startswith("chat_select_"))
+async def chat_select(callback: CallbackQuery):
+    """Выбор чата для рассылки"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    if not hasattr(callback.bot, "_session_chats") or callback.from_user.id not in callback.bot._session_chats:
+        await callback.answer("Ошибка: данные чатов не найдены", show_alert=True)
+        return
+    
+    if not hasattr(callback.bot, "_selected_chats"):
+        callback.bot._selected_chats = {}
+    
+    if callback.from_user.id not in callback.bot._selected_chats:
+        callback.bot._selected_chats[callback.from_user.id] = []
+    
+    if callback.data == "chat_select_all":
+        # Выбираем все чаты
+        chats = callback.bot._session_chats[callback.from_user.id]["chats"]
+        callback.bot._selected_chats[callback.from_user.id] = [chat["id"] for chat in chats]
+        await callback.answer(f"Выбрано {len(chats)} чатов", show_alert=True)
+    else:
+        # Выбираем конкретный чат
+        chat_index = int(callback.data.replace("chat_select_", ""))
+        chats = callback.bot._session_chats[callback.from_user.id]["chats"]
+        if 0 <= chat_index < len(chats):
+            chat_id = chats[chat_index]["id"]
+            if chat_id in callback.bot._selected_chats[callback.from_user.id]:
+                callback.bot._selected_chats[callback.from_user.id].remove(chat_id)
+                await callback.answer("Чат удален из выбора")
+            else:
+                callback.bot._selected_chats[callback.from_user.id].append(chat_id)
+                await callback.answer("Чат добавлен в выбор")
+    
+    await callback.answer()
+
+
+@router.callback_query(F.data == "session_start_broadcast")
+async def session_broadcast_start(callback: CallbackQuery, state: FSMContext):
+    """Начало рассылки"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    if not hasattr(callback.bot, "_selected_chats") or callback.from_user.id not in callback.bot._selected_chats:
+        await callback.answer("Сначала выберите чаты", show_alert=True)
+        return
+    
+    selected_chats = callback.bot._selected_chats[callback.from_user.id]
+    
+    if not selected_chats:
+        await callback.answer("Не выбрано ни одного чата", show_alert=True)
+        return
+    
+    await callback.message.edit_text(
+        f"📤 <b>Рассылка сообщений</b>\n\n"
+        f"Выбрано чатов: {len(selected_chats)}\n\n"
+        f"Введите текст сообщения для рассылки:",
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(SessionStates.waiting_message_text)
+    await callback.answer()
+
+
+@router.message(StateFilter(SessionStates.waiting_message_text))
+async def session_broadcast_send(message: Message, state: FSMContext):
+    """Отправка рассылки"""
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Доступ запрещен")
+        await state.clear()
+        return
+    
+    if not hasattr(message.bot, "_selected_chats") or message.from_user.id not in message.bot._selected_chats:
+        await message.answer("Ошибка: данные чатов не найдены")
+        await state.clear()
+        return
+    
+    if not hasattr(message.bot, "_session_chats") or message.from_user.id not in message.bot._session_chats:
+        await message.answer("Ошибка: данные сессии не найдены")
+        await state.clear()
+        return
+    
+    session_name = message.bot._session_chats[message.from_user.id]["session_name"]
+    chat_ids = message.bot._selected_chats[message.from_user.id]
+    text = message.text
+    
+    await message.answer(f"⏳ Отправляю сообщение в {len(chat_ids)} чатов...")
+    
+    success_count, failed_count, errors = await session_manager.send_message_to_chats(
+        session_name, text, chat_ids, delay=1.0
+    )
+    
+    result_text = (
+        f"✅ <b>Рассылка завершена!</b>\n\n"
+        f"✅ Успешно: {success_count}\n"
+        f"❌ Ошибок: {failed_count}\n"
+        f"📊 Всего: {len(chat_ids)}"
+    )
+    
+    if errors and len(errors) <= 10:
+        result_text += "\n\n<b>Ошибки:</b>\n"
+        for error in errors[:10]:
+            result_text += f"• {error}\n"
+    elif errors:
+        result_text += f"\n\n⚠️ Всего ошибок: {len(errors)}"
+    
+    await message.answer(result_text, parse_mode=ParseMode.HTML)
+    
+    # Очищаем данные
+    if message.from_user.id in message.bot._selected_chats:
+        del message.bot._selected_chats[message.from_user.id]
+    if message.from_user.id in message.bot._session_chats:
+        del message.bot._session_chats[message.from_user.id]
+    
+    await state.clear()
+
+
+@router.callback_query(F.data == "session_broadcast")
+async def session_broadcast_menu(callback: CallbackQuery):
+    """Меню рассылки"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    sessions = session_manager.list_sessions()
+    
+    if not sessions:
+        await callback.answer("Нет сессий", show_alert=True)
+        return
+    
+    keyboard = []
+    for session in sessions:
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"📤 {session['name']}",
+                callback_data=f"session_scan_{session['name']}"
+            )
+        ])
+    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="sessions_back")])
+    
+    await callback.message.edit_text(
+        "📤 <b>Рассылка сообщений</b>\n\nВыберите сессию:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        parse_mode=ParseMode.HTML
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "sessions_back")
+async def sessions_back(callback: CallbackQuery):
+    """Возврат к списку сессий"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    sessions = session_manager.list_sessions()
+    
+    if not sessions:
+        text = "📱 <b>Управление сессиями</b>\n\nНет добавленных сессий.\n\nИспользуйте /add_session для добавления новой сессии."
+    else:
+        text = "📱 <b>Управление сессиями</b>\n\n"
+        for i, session in enumerate(sessions, 1):
+            status = "🟢 Активна" if session["is_active"] else "🔴 Неактивна"
+            text += f"{i}. <b>{session['name']}</b> {status}\n"
+            text += f"   👤 @{session['username']} ({session['phone']})\n\n"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить сессию", callback_data="session_add")],
+        [InlineKeyboardButton(text="🗑 Удалить сессию", callback_data="session_remove")],
+        [InlineKeyboardButton(text="📋 Список чатов", callback_data="session_chats")],
+        [InlineKeyboardButton(text="📤 Рассылка", callback_data="session_broadcast")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+
 # ============= ЗАПУСК БОТА =============
 async def check_crypto_payments_periodically(bot: Bot):
     """Периодическая проверка статуса платежей CryptoBot"""
@@ -3631,6 +4149,7 @@ async def main():
             BotCommand(command="myorders", description="Мои заказы"),
             BotCommand(command="referral", description="Реферальная программа"),
             BotCommand(command="help", description="Справка по командам"),
+            BotCommand(command="sessions", description="Управление сессиями (админ)"),
         ]
         await bot.set_my_commands(commands)
         
@@ -3639,9 +4158,17 @@ async def main():
         
         logger.info("🤖 Бот запущен!")
         logger.info(f"Админы: {ADMIN_IDS}")
-        await dp.start_polling(bot, allowed_updates=["message", "callback_query", "pre_checkout_query", "successful_payment", "inline_query"])
+        try:
+            await dp.start_polling(bot, allowed_updates=["message", "callback_query", "pre_checkout_query", "successful_payment", "inline_query"])
+        finally:
+            # Отключаем все сессии при завершении
+            logger.info("Отключаю все сессии...")
+            await session_manager.disconnect_all()
+            logger.info("Все сессии отключены")
     except Exception as e:
         logger.error(f"Критическая ошибка при запуске: {e}", exc_info=True)
+        # Отключаем сессии даже при ошибке
+        await session_manager.disconnect_all()
         raise
 
 

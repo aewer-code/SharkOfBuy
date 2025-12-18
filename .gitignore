@@ -13,6 +13,10 @@ database.json
 *.db
 *.sqlite
 
+# Sessions
+sessions/
+*.session
+
 # Logs
 *.log
 logs/
