@@ -377,22 +377,21 @@ async def handle_dot_command(message: Message, state: FSMContext):
         delay_display = format_time_interval(delay)
         await message.answer(f"⏳ Начинаю рассылку: {count} сообщений с интервалом {delay_display}...")
         
-        success = 0
-        failed = 0
+        # Отправляем сообщения через сессию пользователя
+        total_success = 0
+        total_failed = 0
         
         for i in range(count):
-            try:
-                await message.bot.send_message(chat_id, msg_text)
-                success += 1
-                await asyncio.sleep(delay)
-            except Exception as e:
-                failed += 1
-                logger.error(f"Ошибка отправки: {e}")
+            success, failed, errors = await session_manager.send_message_to_chats(
+                user_id, msg_text, [chat_id], delay=delay
+            )
+            total_success += success
+            total_failed += failed
         
         await message.answer(
             f"✅ <b>Рассылка завершена!</b>\n\n"
-            f"✅ Успешно: {success}\n"
-            f"❌ Ошибок: {failed}",
+            f"✅ Успешно: {total_success}\n"
+            f"❌ Ошибок: {total_failed}",
             parse_mode=ParseMode.HTML
         )
         return
