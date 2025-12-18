@@ -16,7 +16,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton, BotCommand
+    ReplyKeyboardMarkup, KeyboardButton, BotCommand, ReplyKeyboardRemove
 )
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -158,7 +158,19 @@ async def cmd_start(message: Message):
             [InlineKeyboardButton(text="⚙️ Настройки", callback_data="session_settings")],
         ])
     
-    await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    # Удаляем старую клавиатуру (ReplyKeyboardMarkup), если она есть
+    # Используем ReplyKeyboardRemove для удаления клавиатуры
+    await message.answer(
+        text, 
+        reply_markup=keyboard, 
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Отправляем сообщение с удалением клавиатуры, чтобы убрать старую ReplyKeyboardMarkup
+    try:
+        await message.answer("", reply_markup=ReplyKeyboardRemove(remove_keyboard=True))
+    except:
+        pass
 
 
 # Обработчик API Hash при состоянии waiting_api_hash (должен быть ПЕРЕД обработчиком прямого ввода)
@@ -214,7 +226,7 @@ async def session_add_api_id(message: Message, state: FSMContext):
 @router.message()
 async def session_api_id_direct(message: Message, state: FSMContext):
     """Обработка прямого ввода API ID"""
-    # Сначала проверяем состояние - если есть активное состояние waiting_api_id или waiting_api_hash, пропускаем
+    # Сначала проверяем состояние - если есть активное состояние, пропускаем
     # Это нужно сделать в самом начале, чтобы не мешать другим обработчикам
     current_state = await state.get_state()
     logger.info(f"🔍 session_api_id_direct: состояние={current_state}, текст={message.text}")
@@ -222,7 +234,11 @@ async def session_api_id_direct(message: Message, state: FSMContext):
     if current_state:
         state_str = str(current_state)
         logger.info(f"🔍 session_api_id_direct: проверка состояния {state_str}")
-        if "waiting_api_id" in state_str or "waiting_api_hash" in state_str:
+        # Пропускаем, если есть любое активное состояние (waiting_api_id, waiting_api_hash, waiting_phone, waiting_code, waiting_password, waiting_session_file)
+        if any(x in state_str for x in [
+            "waiting_api_id", "waiting_api_hash", "waiting_phone", 
+            "waiting_code", "waiting_password", "waiting_session_file"
+        ]):
             # Другие обработчики с фильтрами состояний обработают сообщение
             logger.info(f"⏭️ session_api_id_direct: пропускаем, состояние {state_str}")
             return
