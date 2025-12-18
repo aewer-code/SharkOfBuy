@@ -161,9 +161,30 @@ async def cmd_start(message: Message):
     await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
+# Обработчик API ID при состоянии waiting_api_id (должен быть ПЕРЕД обработчиком прямого ввода)
+@router.message(SessionStates.waiting_api_id)
+async def session_add_api_id(message: Message, state: FSMContext):
+    """Обработка API ID"""
+    logger.info(f"🔍 session_add_api_id вызван: user_id={message.from_user.id}, text={message.text}")
+    try:
+        api_id = int(message.text.strip())
+        await state.update_data(api_id=api_id)
+        await state.set_state(SessionStates.waiting_api_hash)
+        logger.info(f"✅ API ID {api_id} принят, переходим к API Hash")
+        await message.answer(
+            f"✅ API ID: <b>{api_id}</b>\n\n"
+            "Теперь введите ваш <b>API Hash</b> (строка):",
+            parse_mode=ParseMode.HTML
+        )
+    except ValueError:
+        logger.error(f"❌ Ошибка парсинга API ID: {message.text}")
+        await message.answer("❌ API ID должен быть числом. Введите снова:")
+
+
 # Обработчик прямого ввода API ID (должен быть ПЕРЕД обработчиком команд)
 # Этот обработчик срабатывает только если нет активного состояния
-@router.message()
+# Используем фильтр, чтобы не срабатывать при состоянии waiting_api_id
+@router.message(~StateFilter(SessionStates.waiting_api_id))
 async def session_api_id_direct(message: Message, state: FSMContext):
     """Обработка прямого ввода API ID"""
     logger.info(f"🔍 session_api_id_direct вызван: user_id={message.from_user.id}, text={message.text}, chat_type={message.chat.type}")
@@ -183,14 +204,13 @@ async def session_api_id_direct(message: Message, state: FSMContext):
         logger.info(f"❌ Не число из 6+ цифр: {text_stripped}")
         return
     
-    # Проверяем состояние - если есть активное состояние, пропускаем
+    # Проверяем состояние - если есть активное состояние, НЕ обрабатываем
     # (чтобы не конфликтовать с другими обработчиками)
     current_state = await state.get_state()
     logger.info(f"🔍 Текущее состояние: {current_state}")
     if current_state:
-        # Если есть любое активное состояние, пропускаем
-        # (другие обработчики обработают сообщение)
-        logger.info(f"❌ Есть активное состояние {current_state}, пропускаем")
+        # Если есть любое активное состояние, НЕ обрабатываем
+        logger.info(f"⏭️ Есть активное состояние {current_state}, пропускаем")
         return
     
     # Всегда отвечаем на число, если нет активного состояния
@@ -460,22 +480,6 @@ async def session_add_start(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(SessionStates.waiting_api_id)
     await callback.answer()
-
-
-@router.message(SessionStates.waiting_api_id)
-async def session_add_api_id(message: Message, state: FSMContext):
-    """Обработка API ID"""
-    try:
-        api_id = int(message.text.strip())
-        await state.update_data(api_id=api_id)
-        await state.set_state(SessionStates.waiting_api_hash)
-        await message.answer(
-            f"✅ API ID: <b>{api_id}</b>\n\n"
-            "Теперь введите ваш <b>API Hash</b> (строка):",
-            parse_mode=ParseMode.HTML
-        )
-    except ValueError:
-        await message.answer("❌ API ID должен быть числом. Введите снова:")
 
 
 @router.message(SessionStates.waiting_api_hash)
