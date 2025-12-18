@@ -238,10 +238,21 @@ async def session_add_phone(message: Message, state: FSMContext):
 @router.message(SessionStates.waiting_api_hash)
 async def session_add_api_hash(message: Message, state: FSMContext):
     """Обработка API Hash"""
-    logger.info(f"🔍 session_add_api_hash вызван: user_id={message.from_user.id}, text={message.text}")
+    logger.info(f"🔍 session_add_api_hash вызван: user_id={message.from_user.id}, text={message.text}, состояние={await state.get_state()}")
+    
+    # Проверяем, что состояние действительно waiting_api_hash
+    current_state = await state.get_state()
+    if current_state != SessionStates.waiting_api_hash.state:
+        logger.info(f"⏭️ session_add_api_hash: пропускаем, состояние {current_state} не waiting_api_hash")
+        return
     
     if not message.text:
         await message.answer("❌ API Hash не может быть пустым. Введите снова:")
+        return
+    
+    # Проверяем, что это не номер телефона (начинается с +)
+    if message.text.strip().startswith('+'):
+        logger.info(f"⏭️ session_add_api_hash: пропускаем, это похоже на номер телефона")
         return
     
     api_hash = message.text.strip()
