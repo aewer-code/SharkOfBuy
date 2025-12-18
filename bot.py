@@ -183,8 +183,11 @@ async def session_add_api_id(message: Message, state: FSMContext):
 
 # Обработчик прямого ввода API ID (должен быть ПЕРЕД обработчиком команд)
 # Этот обработчик срабатывает только если нет активного состояния
-# Используем фильтр, чтобы не срабатывать при состоянии waiting_api_id
-@router.message(~StateFilter(SessionStates.waiting_api_id))
+# Используем фильтр, чтобы не срабатывать при состояниях waiting_api_id и waiting_api_hash
+@router.message(
+    ~StateFilter(SessionStates.waiting_api_id) &
+    ~StateFilter(SessionStates.waiting_api_hash)
+)
 async def session_api_id_direct(message: Message, state: FSMContext):
     """Обработка прямого ввода API ID"""
     logger.info(f"🔍 session_api_id_direct вызван: user_id={message.from_user.id}, text={message.text}, chat_type={message.chat.type}")
@@ -485,8 +488,15 @@ async def session_add_start(callback: CallbackQuery, state: FSMContext):
 @router.message(SessionStates.waiting_api_hash)
 async def session_add_api_hash(message: Message, state: FSMContext):
     """Обработка API Hash"""
+    logger.info(f"🔍 session_add_api_hash вызван: user_id={message.from_user.id}, text={message.text}")
+    
+    if not message.text:
+        await message.answer("❌ API Hash не может быть пустым. Введите снова:")
+        return
+    
     api_hash = message.text.strip()
     await state.update_data(api_hash=api_hash)
+    logger.info(f"✅ API Hash принят, длина: {len(api_hash)}")
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📁 Загрузить файл сессии", callback_data="session_method_file")],
