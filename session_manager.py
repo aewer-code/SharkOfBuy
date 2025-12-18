@@ -10,6 +10,8 @@ from typing import Optional, List, Dict
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError, FloodWaitError, PhoneCodeInvalidError
 from telethon.tl.types import User, Chat, Channel
+from telethon.tl.functions.messages import ImportChatInviteRequest
+from telethon.tl.functions.channels import JoinChannelRequest
 
 logger = logging.getLogger(__name__)
 
@@ -416,6 +418,174 @@ class SessionManager:
                 errors.append(f"Chat {chat_id}: {str(e)}")
         
         return success_count, failed_count, errors
+    
+    async def archive_chats(self, user_id: int, chat_ids: List[int]) -> tuple[int, int, List[str]]:
+        """
+        Архивирует указанные чаты
+        
+        Returns:
+            (success_count, failed_count, errors)
+        """
+        user_id_str = str(user_id)
+        
+        if user_id_str not in self.clients:
+            if user_id_str not in self.sessions_data:
+                return 0, len(chat_ids), ["Сессия не найдена"]
+            
+            # Переподключаем
+            data = self.sessions_data[user_id_str]
+            client = TelegramClient(
+                data["session_path"],
+                data["api_id"],
+                data["api_hash"]
+            )
+            await client.connect()
+            if not await client.is_user_authorized():
+                return 0, len(chat_ids), ["Сессия не авторизована"]
+            self.clients[user_id_str] = client
+        
+        client = self.clients[user_id_str]
+        success_count = 0
+        failed_count = 0
+        errors = []
+        
+        for chat_id in chat_ids:
+            try:
+                # Архивируем чат через редактирование диалога
+                entity = await client.get_entity(chat_id)
+                await client.edit_folder(entity, folder=1)  # 1 = архив
+                success_count += 1
+                await asyncio.sleep(0.1)  # Небольшая задержка
+            except Exception as e:
+                # Если метод не работает, просто пропускаем
+                failed_count += 1
+                errors.append(f"Chat {chat_id}: {str(e)}")
+        
+        return success_count, failed_count, errors
+    
+    async def join_chats_from_file(self, user_id: int, file_path: str) -> tuple[int, int, List[str]]:
+        """
+        Присоединяется к чатам из файла и архивирует их
+        
+        Returns:
+            (success_count, failed_count, errors)
+        """
+        user_id_str = str(user_id)
+        
+        if user_id_str not in self.clients:
+            if user_id_str not in self.sessions_data:
+                return 0, 0, ["Сессия не найдена"]
+            
+            data = self.sessions_data[user_id_str]
+            client = TelegramClient(
+                data["session_path"],
+                data["api_id"],
+                data["api_hash"]
+            )
+            await client.connect()
+            if not await client.is_user_authorized():
+                return 0, 0, ["Сессия не авторизована"]
+            self.clients[user_id_str] = client
+        
+        client = self.clients[user_id_str]
+        
+        # Читаем файл
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+        except Exception as e:
+            return 0, 0, [f"Ошибка чтения файла: {str(e)}"]
+        
+        # Парсим ссылки
+        chat_usernames = []
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            
+            # Извлекаем username из ссылки
+            if 't.me/' in line:
+                username = line.split('t.me/')[-1].split('/')[0].split('?')[0]
+                if username:
+                    chat_usernames.append(username)
+        
+        if not chat_usernames:
+            return 0, 0, ["Не найдено валидных ссылок в файле"]
+        
+        success_count = 0
+        failed_count = 0
+        errors = []
+        joined_chat_ids = []
+        
+        # Присоединяемся к чатам
+        for username in chat_usernames:
+            try:
+                entity = await client.get_entity(username)
+                if hasattr(entity, 'broadcast') or hasattr(entity, 'megagroup'):
+                    # Канал или супергруппа
+                    await client(JoinChannelRequest(entity))
+                else:
+                    # Обычная группа
+                    await client(ImportChatInviteRequest(entity))
+                joined_chat_ids.append(entity.id)
+                success_count += 1
+                await asyncio.sleep(0.5)  # Задержка между присоединениями
+            except Exception as e:
+                # Пробуем как invite ссылку
+                try:
+                    if username.startswith('+') or username.startswith('joinchat'):
+                        hash_part = username.replace('+', '').replace('joinchat/', '')
+                        await client(ImportChatInviteRequest(hash_part))
+                        success_count += 1
+                    else:
+                        failed_count += 1
+                        errors.append(f"@{username}: {str(e)}")
+                except:
+                    failed_count += 1
+                    errors.append(f"@{username}: {str(e)}")
+        
+        # Архивируем все присоединенные чаты
+        if joined_chat_ids:
+            archived, failed_arch, arch_errors = await self.archive_chats(user_id, joined_chat_ids)
+            errors.extend(arch_errors)
+        
+        return success_count, failed_count, errors
+    
+    async def get_chat_ids_from_usernames(self, user_id: int, usernames: List[str]) -> List[int]:
+        """
+        Получает ID чатов по их username
+        
+        Returns:
+            List[int]: Список ID чатов
+        """
+        user_id_str = str(user_id)
+        
+        if user_id_str not in self.clients:
+            if user_id_str not in self.sessions_data:
+                return []
+            
+            data = self.sessions_data[user_id_str]
+            client = TelegramClient(
+                data["session_path"],
+                data["api_id"],
+                data["api_hash"]
+            )
+            await client.connect()
+            if not await client.is_user_authorized():
+                return []
+            self.clients[user_id_str] = client
+        
+        client = self.clients[user_id_str]
+        chat_ids = []
+        
+        for username in usernames:
+            try:
+                entity = await client.get_entity(username)
+                chat_ids.append(entity.id)
+            except:
+                pass
+        
+        return chat_ids
     
     async def disconnect_all(self):
         """Отключает все активные сессии"""
