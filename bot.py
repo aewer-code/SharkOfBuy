@@ -162,17 +162,11 @@ async def cmd_start(message: Message):
 
 
 # Обработчик прямого ввода API ID (должен быть ПЕРЕД обработчиком команд)
-@router.message(
-    ~StateFilter(SessionStates.waiting_code) &
-    ~StateFilter(SessionStates.waiting_password) &
-    ~StateFilter(SessionStates.waiting_phone) &
-    ~StateFilter(SessionStates.waiting_session_file) &
-    ~StateFilter(SessionStates.waiting_api_hash) &
-    ~StateFilter(SessionStates.waiting_api_id)
-)
+# Этот обработчик срабатывает только если нет активного состояния
+@router.message()
 async def session_api_id_direct(message: Message, state: FSMContext):
     """Обработка прямого ввода API ID"""
-    # Проверяем, что это текст и не команда с точкой
+    # Быстрая проверка - если это не текст или команда с точкой, выходим
     if not message.text or message.text.startswith("."):
         return
     
@@ -180,7 +174,15 @@ async def session_api_id_direct(message: Message, state: FSMContext):
     if not re.match(r'^\d{6,}$', message.text.strip()):
         return
     
-    # Всегда отвечаем на число, если не в процессе другой операции
+    # Проверяем состояние - если есть активное состояние, пропускаем
+    # (чтобы не конфликтовать с другими обработчиками)
+    current_state = await state.get_state()
+    if current_state:
+        # Если есть любое активное состояние, пропускаем
+        # (другие обработчики обработают сообщение)
+        return
+    
+    # Всегда отвечаем на число, если нет активного состояния
     logger.info(f"Обработчик прямого ввода API ID вызван для пользователя {message.from_user.id}, текст: {message.text}")
     try:
         api_id = int(message.text.strip())
