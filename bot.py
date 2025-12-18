@@ -419,7 +419,6 @@ class AdminStates(StatesGroup):
 
 
 class SessionStates(StatesGroup):
-    waiting_session_name = State()
     waiting_api_id = State()
     waiting_api_hash = State()
     waiting_session_file = State()
@@ -3440,27 +3439,37 @@ async def admin_back(callback: CallbackQuery):
 @router.message(Command("sessions"))
 async def cmd_sessions(message: Message):
     """Управление сессиями Telegram"""
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Доступ запрещен")
-        return
+    user_id = message.from_user.id
+    session_data = session_manager.get_user_session(user_id)
     
-    sessions = session_manager.list_sessions()
-    
-    if not sessions:
-        text = "📱 <b>Управление сессиями</b>\n\nНет добавленных сессий.\n\nИспользуйте /add_session для добавления новой сессии."
+    if not session_data:
+        text = (
+            "📱 <b>Управление сессией</b>\n\n"
+            "У вас пока нет добавленной сессии.\n\n"
+            "Для добавления сессии вам понадобится:\n"
+            "1️⃣ API ID и API Hash (получите на https://my.telegram.org/apps)\n"
+            "2️⃣ Файл сессии (.session)\n\n"
+            "Нажмите кнопку ниже, чтобы начать:"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить сессию", callback_data="session_add")],
+        ])
     else:
-        text = "📱 <b>Управление сессиями</b>\n\n"
-        for i, session in enumerate(sessions, 1):
-            status = "🟢 Активна" if session["is_active"] else "🔴 Неактивна"
-            text += f"{i}. <b>{session['name']}</b> {status}\n"
-            text += f"   👤 @{session['username']} ({session['phone']})\n\n"
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Добавить сессию", callback_data="session_add")],
-        [InlineKeyboardButton(text="🗑 Удалить сессию", callback_data="session_remove")],
-        [InlineKeyboardButton(text="📋 Список чатов", callback_data="session_chats")],
-        [InlineKeyboardButton(text="📤 Рассылка", callback_data="session_broadcast")]
-    ])
+        status = "🟢 Активна" if session_data["is_active"] else "🔴 Неактивна"
+        text = (
+            "📱 <b>Ваша сессия</b>\n\n"
+            f"Статус: {status}\n"
+            f"👤 Аккаунт: @{session_data.get('username', 'N/A')}\n"
+            f"📱 Телефон: {session_data.get('phone', 'N/A')}\n"
+            f"🆔 ID: {session_data.get('telegram_user_id', 'N/A')}\n\n"
+            "Выберите действие:"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Список чатов", callback_data="session_chats")],
+            [InlineKeyboardButton(text="📤 Рассылка", callback_data="session_broadcast")],
+            [InlineKeyboardButton(text="🗑 Удалить сессию", callback_data="session_remove")],
+            [InlineKeyboardButton(text="🔄 Обновить сессию", callback_data="session_add")],
+        ])
     
     await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
@@ -3468,35 +3477,14 @@ async def cmd_sessions(message: Message):
 @router.callback_query(F.data == "session_add")
 async def session_add_start(callback: CallbackQuery, state: FSMContext):
     """Начало добавления сессии"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Доступ запрещен", show_alert=True)
-        return
-    
     await callback.message.edit_text(
         "➕ <b>Добавление сессии</b>\n\n"
-        "Введите имя для сессии (например: my_account):",
+        "Для начала введите ваш <b>API ID</b> (число):\n\n"
+        "💡 Получить можно на https://my.telegram.org/apps",
         parse_mode=ParseMode.HTML
     )
-    await state.set_state(SessionStates.waiting_session_name)
-    await callback.answer()
-
-
-@router.message(StateFilter(SessionStates.waiting_session_name))
-async def session_add_name(message: Message, state: FSMContext):
-    """Обработка имени сессии"""
-    session_name = message.text.strip()
-    
-    if session_name in session_manager.sessions_data:
-        await message.answer("❌ Сессия с таким именем уже существует. Введите другое имя:")
-        return
-    
-    await state.update_data(session_name=session_name)
     await state.set_state(SessionStates.waiting_api_id)
-    await message.answer(
-        f"✅ Имя сессии: <b>{session_name}</b>\n\n"
-        "Теперь введите API ID (число):",
-        parse_mode=ParseMode.HTML
-    )
+    await callback.answer()
 
 
 @router.message(StateFilter(SessionStates.waiting_api_id))
@@ -3508,7 +3496,7 @@ async def session_add_api_id(message: Message, state: FSMContext):
         await state.set_state(SessionStates.waiting_api_hash)
         await message.answer(
             f"✅ API ID: <b>{api_id}</b>\n\n"
-            "Теперь введите API Hash (строка):",
+            "Теперь введите ваш <b>API Hash</b> (строка):",
             parse_mode=ParseMode.HTML
         )
     except ValueError:
@@ -3523,7 +3511,11 @@ async def session_add_api_hash(message: Message, state: FSMContext):
     await state.set_state(SessionStates.waiting_session_file)
     await message.answer(
         f"✅ API Hash: <b>{api_hash}</b>\n\n"
-        "Теперь отправьте файл сессии (.session):",
+        "Теперь отправьте файл сессии (<code>.session</code>):\n\n"
+        "💡 Если у вас нет файла сессии, создайте его с помощью Telethon:\n"
+        "<code>from telethon import TelegramClient\n"
+        "client = TelegramClient('session', api_id, api_hash)\n"
+        "client.start()</code>",
         parse_mode=ParseMode.HTML
     )
 
@@ -3532,14 +3524,14 @@ async def session_add_api_hash(message: Message, state: FSMContext):
 async def session_add_file(message: Message, state: FSMContext):
     """Обработка файла сессии"""
     try:
+        user_id = message.from_user.id
         data = await state.get_data()
-        session_name = data["session_name"]
         api_id = data["api_id"]
         api_hash = data["api_hash"]
         
         # Скачиваем файл
         file = await message.bot.get_file(message.document.file_id)
-        file_path = os.path.join("sessions", f"{session_name}.session")
+        file_path = os.path.join("sessions", f"user_{user_id}.session")
         
         # Создаем директорию если её нет
         os.makedirs("sessions", exist_ok=True)
@@ -3551,12 +3543,13 @@ async def session_add_file(message: Message, state: FSMContext):
         
         # Добавляем сессию
         success, msg = await session_manager.add_session(
-            session_name, api_id, api_hash, file_path
+            user_id, api_id, api_hash, file_path
         )
         
         if success:
             await message.answer(
-                f"✅ <b>Сессия успешно добавлена!</b>\n\n{msg}",
+                f"✅ <b>Сессия успешно добавлена!</b>\n\n{msg}\n\n"
+                "Теперь вы можете использовать команду /sessions для управления.",
                 parse_mode=ParseMode.HTML
             )
         else:
@@ -3574,46 +3567,38 @@ async def session_add_file(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data == "session_remove")
-async def session_remove_start(callback: CallbackQuery):
-    """Удаление сессии"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Доступ запрещен", show_alert=True)
+async def session_remove_confirm(callback: CallbackQuery):
+    """Подтверждение удаления сессии"""
+    user_id = callback.from_user.id
+    
+    session_data = session_manager.get_user_session(user_id)
+    if not session_data:
+        await callback.answer("У вас нет сессии для удаления", show_alert=True)
         return
     
-    sessions = session_manager.list_sessions()
-    
-    if not sessions:
-        await callback.answer("Нет сессий для удаления", show_alert=True)
-        return
-    
-    keyboard = []
-    for session in sessions:
-        keyboard.append([
-            InlineKeyboardButton(
-                text=f"🗑 {session['name']}",
-                callback_data=f"session_delete_{session['name']}"
-            )
-        ])
-    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="sessions_back")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да, удалить", callback_data="session_delete_yes")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="sessions_back")]
+    ])
     
     await callback.message.edit_text(
-        "🗑 <b>Удаление сессии</b>\n\nВыберите сессию для удаления:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        "🗑 <b>Удаление сессии</b>\n\n"
+        f"Вы уверены, что хотите удалить сессию?\n\n"
+        f"Аккаунт: @{session_data.get('username', 'N/A')}\n"
+        f"Телефон: {session_data.get('phone', 'N/A')}\n\n"
+        "⚠️ Это действие нельзя отменить!",
+        reply_markup=keyboard,
         parse_mode=ParseMode.HTML
     )
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("session_delete_"))
-async def session_remove_confirm(callback: CallbackQuery):
-    """Подтверждение удаления сессии"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Доступ запрещен", show_alert=True)
-        return
+@router.callback_query(F.data == "session_delete_yes")
+async def session_remove_execute(callback: CallbackQuery):
+    """Выполнение удаления сессии"""
+    user_id = callback.from_user.id
     
-    session_name = callback.data.replace("session_delete_", "")
-    
-    success, msg = await session_manager.remove_session(session_name)
+    success, msg = await session_manager.remove_session(user_id)
     
     if success:
         await callback.message.edit_text(
@@ -3630,49 +3615,19 @@ async def session_remove_confirm(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "session_chats")
-async def session_chats_start(callback: CallbackQuery):
-    """Сканирование чатов"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Доступ запрещен", show_alert=True)
-        return
-    
-    sessions = session_manager.list_sessions()
-    
-    if not sessions:
-        await callback.answer("Нет сессий", show_alert=True)
-        return
-    
-    keyboard = []
-    for session in sessions:
-        keyboard.append([
-            InlineKeyboardButton(
-                text=f"📋 {session['name']}",
-                callback_data=f"session_scan_{session['name']}"
-            )
-        ])
-    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="sessions_back")])
-    
-    await callback.message.edit_text(
-        "📋 <b>Сканирование чатов</b>\n\nВыберите сессию:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-        parse_mode=ParseMode.HTML
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("session_scan_"))
 async def session_chats_scan(callback: CallbackQuery):
-    """Сканирование чатов выбранной сессии"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Доступ запрещен", show_alert=True)
-        return
+    """Сканирование чатов"""
+    user_id = callback.from_user.id
     
-    session_name = callback.data.replace("session_scan_", "")
+    session_data = session_manager.get_user_session(user_id)
+    if not session_data:
+        await callback.answer("Сначала добавьте сессию через /sessions", show_alert=True)
+        return
     
     await callback.message.edit_text("⏳ Сканирую чаты...")
     await callback.answer()
     
-    success, msg, chats = await session_manager.get_chats(session_name, limit=200)
+    success, msg, chats = await session_manager.get_chats(user_id, limit=200)
     
     if not success:
         await callback.message.edit_text(
@@ -3685,12 +3640,11 @@ async def session_chats_scan(callback: CallbackQuery):
     if not hasattr(callback.bot, "_session_chats"):
         callback.bot._session_chats = {}
     callback.bot._session_chats[callback.from_user.id] = {
-        "session_name": session_name,
         "chats": chats
     }
     
     # Формируем список чатов
-    text = f"📋 <b>Чаты сессии {session_name}</b>\n\n{msg}\n\n"
+    text = f"📋 <b>Ваши чаты</b>\n\n{msg}\n\n"
     text += "Выберите чаты для рассылки (можно несколько):\n\n"
     
     keyboard = []
@@ -3758,15 +3712,20 @@ async def chat_select(callback: CallbackQuery):
 @router.callback_query(F.data == "session_start_broadcast")
 async def session_broadcast_start(callback: CallbackQuery, state: FSMContext):
     """Начало рассылки"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Доступ запрещен", show_alert=True)
-        return
+    user_id = callback.from_user.id
     
-    if not hasattr(callback.bot, "_selected_chats") or callback.from_user.id not in callback.bot._selected_chats:
-        await callback.answer("Сначала выберите чаты", show_alert=True)
-        return
+    if not hasattr(callback.bot, "_selected_chats") or user_id not in callback.bot._selected_chats:
+        # Если чаты не выбраны, выбираем все
+        if not hasattr(callback.bot, "_session_chats") or user_id not in callback.bot._session_chats:
+            await callback.answer("Сначала отсканируйте чаты", show_alert=True)
+            return
+        
+        chats = callback.bot._session_chats[user_id]["chats"]
+        if not hasattr(callback.bot, "_selected_chats"):
+            callback.bot._selected_chats = {}
+        callback.bot._selected_chats[user_id] = [chat["id"] for chat in chats]
     
-    selected_chats = callback.bot._selected_chats[callback.from_user.id]
+    selected_chats = callback.bot._selected_chats[user_id]
     
     if not selected_chats:
         await callback.answer("Не выбрано ни одного чата", show_alert=True)
@@ -3785,29 +3744,20 @@ async def session_broadcast_start(callback: CallbackQuery, state: FSMContext):
 @router.message(StateFilter(SessionStates.waiting_message_text))
 async def session_broadcast_send(message: Message, state: FSMContext):
     """Отправка рассылки"""
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Доступ запрещен")
-        await state.clear()
-        return
+    user_id = message.from_user.id
     
-    if not hasattr(message.bot, "_selected_chats") or message.from_user.id not in message.bot._selected_chats:
+    if not hasattr(message.bot, "_selected_chats") or user_id not in message.bot._selected_chats:
         await message.answer("Ошибка: данные чатов не найдены")
         await state.clear()
         return
     
-    if not hasattr(message.bot, "_session_chats") or message.from_user.id not in message.bot._session_chats:
-        await message.answer("Ошибка: данные сессии не найдены")
-        await state.clear()
-        return
-    
-    session_name = message.bot._session_chats[message.from_user.id]["session_name"]
-    chat_ids = message.bot._selected_chats[message.from_user.id]
+    chat_ids = message.bot._selected_chats[user_id]
     text = message.text
     
     await message.answer(f"⏳ Отправляю сообщение в {len(chat_ids)} чатов...")
     
     success_count, failed_count, errors = await session_manager.send_message_to_chats(
-        session_name, text, chat_ids, delay=1.0
+        user_id, text, chat_ids, delay=1.0
     )
     
     result_text = (
@@ -3837,59 +3787,96 @@ async def session_broadcast_send(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "session_broadcast")
 async def session_broadcast_menu(callback: CallbackQuery):
-    """Меню рассылки"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Доступ запрещен", show_alert=True)
+    """Меню рассылки - сначала сканируем чаты"""
+    user_id = callback.from_user.id
+    
+    session_data = session_manager.get_user_session(user_id)
+    if not session_data:
+        await callback.answer("Сначала добавьте сессию через /sessions", show_alert=True)
         return
     
-    sessions = session_manager.list_sessions()
+    # Автоматически запускаем сканирование чатов
+    await callback.message.edit_text("⏳ Сканирую чаты...")
+    await callback.answer()
     
-    if not sessions:
-        await callback.answer("Нет сессий", show_alert=True)
+    success, msg, chats = await session_manager.get_chats(user_id, limit=200)
+    
+    if not success:
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка:</b>\n\n{msg}",
+            parse_mode=ParseMode.HTML
+        )
         return
+    
+    # Сохраняем чаты во временное хранилище
+    if not hasattr(callback.bot, "_session_chats"):
+        callback.bot._session_chats = {}
+    callback.bot._session_chats[callback.from_user.id] = {
+        "chats": chats
+    }
+    
+    # Формируем список чатов
+    text = f"📋 <b>Ваши чаты</b>\n\n{msg}\n\n"
+    text += "Выберите чаты для рассылки (можно несколько):\n\n"
     
     keyboard = []
-    for session in sessions:
+    for i, chat in enumerate(chats[:50]):  # Показываем первые 50
+        chat_type_emoji = "📢" if chat["type"] == "channel" else ("👥" if chat["type"] == "group" else "👤")
         keyboard.append([
             InlineKeyboardButton(
-                text=f"📤 {session['name']}",
-                callback_data=f"session_scan_{session['name']}"
+                text=f"{chat_type_emoji} {chat['title'][:30]}",
+                callback_data=f"chat_select_{i}"
             )
         ])
+    
+    if len(chats) > 50:
+        text += f"\n⚠️ Показано 50 из {len(chats)} чатов"
+    
+    keyboard.append([InlineKeyboardButton(text="✅ Выбрать все", callback_data="chat_select_all")])
+    keyboard.append([InlineKeyboardButton(text="📤 Начать рассылку", callback_data="session_start_broadcast")])
     keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="sessions_back")])
     
     await callback.message.edit_text(
-        "📤 <b>Рассылка сообщений</b>\n\nВыберите сессию:",
+        text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
         parse_mode=ParseMode.HTML
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data == "sessions_back")
 async def sessions_back(callback: CallbackQuery):
-    """Возврат к списку сессий"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Доступ запрещен", show_alert=True)
-        return
+    """Возврат к меню сессий"""
+    user_id = callback.from_user.id
+    session_data = session_manager.get_user_session(user_id)
     
-    sessions = session_manager.list_sessions()
-    
-    if not sessions:
-        text = "📱 <b>Управление сессиями</b>\n\nНет добавленных сессий.\n\nИспользуйте /add_session для добавления новой сессии."
+    if not session_data:
+        text = (
+            "📱 <b>Управление сессией</b>\n\n"
+            "У вас пока нет добавленной сессии.\n\n"
+            "Для добавления сессии вам понадобится:\n"
+            "1️⃣ API ID и API Hash (получите на https://my.telegram.org/apps)\n"
+            "2️⃣ Файл сессии (.session)\n\n"
+            "Нажмите кнопку ниже, чтобы начать:"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить сессию", callback_data="session_add")],
+        ])
     else:
-        text = "📱 <b>Управление сессиями</b>\n\n"
-        for i, session in enumerate(sessions, 1):
-            status = "🟢 Активна" if session["is_active"] else "🔴 Неактивна"
-            text += f"{i}. <b>{session['name']}</b> {status}\n"
-            text += f"   👤 @{session['username']} ({session['phone']})\n\n"
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Добавить сессию", callback_data="session_add")],
-        [InlineKeyboardButton(text="🗑 Удалить сессию", callback_data="session_remove")],
-        [InlineKeyboardButton(text="📋 Список чатов", callback_data="session_chats")],
-        [InlineKeyboardButton(text="📤 Рассылка", callback_data="session_broadcast")]
-    ])
+        status = "🟢 Активна" if session_data["is_active"] else "🔴 Неактивна"
+        text = (
+            "📱 <b>Ваша сессия</b>\n\n"
+            f"Статус: {status}\n"
+            f"👤 Аккаунт: @{session_data.get('username', 'N/A')}\n"
+            f"📱 Телефон: {session_data.get('phone', 'N/A')}\n"
+            f"🆔 ID: {session_data.get('telegram_user_id', 'N/A')}\n\n"
+            "Выберите действие:"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Список чатов", callback_data="session_chats")],
+            [InlineKeyboardButton(text="📤 Рассылка", callback_data="session_broadcast")],
+            [InlineKeyboardButton(text="🗑 Удалить сессию", callback_data="session_remove")],
+            [InlineKeyboardButton(text="🔄 Обновить сессию", callback_data="session_add")],
+        ])
     
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     await callback.answer()
@@ -4149,7 +4136,7 @@ async def main():
             BotCommand(command="myorders", description="Мои заказы"),
             BotCommand(command="referral", description="Реферальная программа"),
             BotCommand(command="help", description="Справка по командам"),
-            BotCommand(command="sessions", description="Управление сессиями (админ)"),
+            BotCommand(command="sessions", description="Управление Telegram сессией"),
         ]
         await bot.set_my_commands(commands)
         

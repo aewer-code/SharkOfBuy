@@ -50,26 +50,33 @@ class SessionManager:
     
     async def add_session(
         self, 
-        session_name: str, 
+        user_id: int,
         api_id: int, 
         api_hash: str,
         session_file_path: Optional[str] = None
     ) -> tuple[bool, str]:
         """
-        Добавляет новую сессию
+        Добавляет новую сессию для пользователя
         
         Args:
-            session_name: Имя сессии
+            user_id: ID пользователя бота
             api_id: API ID
             api_hash: API Hash
-            session_file_path: Путь к файлу сессии (если None, используется session_name.session)
+            session_file_path: Путь к файлу сессии (если None, создается новый файл)
         
         Returns:
             (success, message)
         """
         try:
-            if session_name in self.clients:
-                return False, "Сессия с таким именем уже активна"
+            user_id_str = str(user_id)
+            
+            # Если сессия уже существует, отключаем старую
+            if user_id_str in self.clients:
+                try:
+                    await self.clients[user_id_str].disconnect()
+                except:
+                    pass
+                del self.clients[user_id_str]
             
             # Определяем путь к файлу сессии
             if session_file_path:
@@ -77,9 +84,8 @@ class SessionManager:
                     return False, f"Файл сессии не найден: {session_file_path}"
                 session_path = session_file_path
             else:
-                session_path = os.path.join(self.sessions_dir, f"{session_name}.session")
-                if not os.path.exists(session_path):
-                    return False, f"Файл сессии не найден: {session_path}"
+                # Создаем новый файл сессии для пользователя
+                session_path = os.path.join(self.sessions_dir, f"user_{user_id}.session")
             
             # Создаем клиент
             client = TelegramClient(session_path, api_id, api_hash)
@@ -94,7 +100,7 @@ class SessionManager:
             me = await client.get_me()
             
             # Сохраняем данные сессии
-            self.sessions_data[session_name] = {
+            self.sessions_data[user_id_str] = {
                 "api_id": api_id,
                 "api_hash": api_hash,
                 "session_path": session_path,
@@ -102,14 +108,14 @@ class SessionManager:
                 "username": me.username,
                 "first_name": me.first_name,
                 "last_name": me.last_name,
-                "user_id": me.id
+                "telegram_user_id": me.id
             }
             self.save_sessions_data()
             
             # Сохраняем клиент
-            self.clients[session_name] = client
+            self.clients[user_id_str] = client
             
-            return True, f"Сессия успешно добавлена: @{me.username or me.phone} (ID: {me.id})"
+            return True, f"✅ Сессия успешно добавлена!\n\n👤 Аккаунт: @{me.username or me.phone}\n🆔 ID: {me.id}"
             
         except SessionPasswordNeededError:
             return False, "Требуется двухфакторная аутентификация. Пока не поддерживается"
@@ -117,30 +123,49 @@ class SessionManager:
             logger.error(f"Ошибка добавления сессии: {e}")
             return False, f"Ошибка: {str(e)}"
     
-    async def remove_session(self, session_name: str) -> tuple[bool, str]:
-        """Удаляет сессию"""
+    async def remove_session(self, user_id: int) -> tuple[bool, str]:
+        """Удаляет сессию пользователя"""
         try:
-            if session_name in self.clients:
-                client = self.clients[session_name]
-                await client.disconnect()
-                del self.clients[session_name]
+            user_id_str = str(user_id)
             
-            if session_name in self.sessions_data:
-                del self.sessions_data[session_name]
+            if user_id_str in self.clients:
+                client = self.clients[user_id_str]
+                await client.disconnect()
+                del self.clients[user_id_str]
+            
+            if user_id_str in self.sessions_data:
+                # Удаляем файл сессии
+                session_path = self.sessions_data[user_id_str].get("session_path")
+                if session_path and os.path.exists(session_path):
+                    try:
+                        os.remove(session_path)
+                    except:
+                        pass
+                
+                del self.sessions_data[user_id_str]
                 self.save_sessions_data()
             
-            return True, "Сессия удалена"
+            return True, "✅ Сессия удалена"
         except Exception as e:
             logger.error(f"Ошибка удаления сессии: {e}")
             return False, f"Ошибка: {str(e)}"
     
+    def get_user_session(self, user_id: int) -> Optional[Dict]:
+        """Возвращает данные сессии пользователя"""
+        user_id_str = str(user_id)
+        if user_id_str in self.sessions_data:
+            data = self.sessions_data[user_id_str].copy()
+            data["is_active"] = user_id_str in self.clients
+            return data
+        return None
+    
     def list_sessions(self) -> List[Dict]:
-        """Возвращает список всех сессий"""
+        """Возвращает список всех сессий (для админов)"""
         sessions = []
-        for name, data in self.sessions_data.items():
-            is_active = name in self.clients
+        for user_id_str, data in self.sessions_data.items():
+            is_active = user_id_str in self.clients
             sessions.append({
-                "name": name,
+                "user_id": int(user_id_str),
                 "phone": data.get("phone", "N/A"),
                 "username": data.get("username", "N/A"),
                 "first_name": data.get("first_name", "N/A"),
@@ -148,20 +173,22 @@ class SessionManager:
             })
         return sessions
     
-    async def get_chats(self, session_name: str, limit: int = 200) -> tuple[bool, str, List[Dict]]:
+    async def get_chats(self, user_id: int, limit: int = 200) -> tuple[bool, str, List[Dict]]:
         """
-        Получает список чатов для сессии
+        Получает список чатов для сессии пользователя
         
         Returns:
             (success, message, chats_list)
         """
         try:
-            if session_name not in self.clients:
+            user_id_str = str(user_id)
+            
+            if user_id_str not in self.clients:
                 # Пытаемся переподключить
-                if session_name not in self.sessions_data:
-                    return False, "Сессия не найдена", []
+                if user_id_str not in self.sessions_data:
+                    return False, "Сессия не найдена. Сначала добавьте сессию через /sessions", []
                 
-                data = self.sessions_data[session_name]
+                data = self.sessions_data[user_id_str]
                 client = TelegramClient(
                     data["session_path"],
                     data["api_id"],
@@ -170,9 +197,9 @@ class SessionManager:
                 await client.connect()
                 if not await client.is_user_authorized():
                     return False, "Сессия не авторизована", []
-                self.clients[session_name] = client
+                self.clients[user_id_str] = client
             
-            client = self.clients[session_name]
+            client = self.clients[user_id_str]
             chats = []
             
             async for dialog in client.iter_dialogs(limit=limit):
@@ -194,7 +221,7 @@ class SessionManager:
     
     async def send_message_to_chats(
         self,
-        session_name: str,
+        user_id: int,
         text: str,
         chat_ids: List[int],
         delay: float = 1.0
@@ -203,7 +230,7 @@ class SessionManager:
         Отправляет сообщение в указанные чаты (как новое сообщение, не пересылка)
         
         Args:
-            session_name: Имя сессии
+            user_id: ID пользователя бота
             text: Текст сообщения
             chat_ids: Список ID чатов
             delay: Задержка между отправками (в секундах)
@@ -211,12 +238,14 @@ class SessionManager:
         Returns:
             (success_count, failed_count, errors)
         """
-        if session_name not in self.clients:
-            if session_name not in self.sessions_data:
-                return 0, len(chat_ids), ["Сессия не найдена"]
+        user_id_str = str(user_id)
+        
+        if user_id_str not in self.clients:
+            if user_id_str not in self.sessions_data:
+                return 0, len(chat_ids), ["Сессия не найдена. Сначала добавьте сессию через /sessions"]
             
             # Переподключаем
-            data = self.sessions_data[session_name]
+            data = self.sessions_data[user_id_str]
             client = TelegramClient(
                 data["session_path"],
                 data["api_id"],
@@ -225,9 +254,9 @@ class SessionManager:
             await client.connect()
             if not await client.is_user_authorized():
                 return 0, len(chat_ids), ["Сессия не авторизована"]
-            self.clients[session_name] = client
+            self.clients[user_id_str] = client
         
-        client = self.clients[session_name]
+        client = self.clients[user_id_str]
         success_count = 0
         failed_count = 0
         errors = []
