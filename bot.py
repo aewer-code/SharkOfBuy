@@ -163,7 +163,7 @@ async def cmd_start(message: Message):
 
 # Обработчик прямого ввода API ID (должен быть ПЕРЕД обработчиком команд)
 @router.message(
-    F.text.regexp(r'^\d{6,}$') & 
+    F.text &
     ~StateFilter(SessionStates.waiting_code) &
     ~StateFilter(SessionStates.waiting_password) &
     ~StateFilter(SessionStates.waiting_phone) &
@@ -174,6 +174,10 @@ async def cmd_start(message: Message):
 )
 async def session_api_id_direct(message: Message, state: FSMContext):
     """Обработка прямого ввода API ID"""
+    # Проверяем, что это число из 6+ цифр
+    if not message.text or not re.match(r'^\d{6,}$', message.text.strip()):
+        return
+    
     # Всегда отвечаем на число, если не в процессе другой операции
     logger.info(f"Обработчик прямого ввода API ID вызван для пользователя {message.from_user.id}, текст: {message.text}")
     try:
