@@ -8,7 +8,7 @@ import json
 import logging
 from typing import Optional, List, Dict
 from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError, FloodWaitError
+from telethon.errors import SessionPasswordNeededError, FloodWaitError, PhoneCodeInvalidError
 from telethon.tl.types import User, Chat, Channel
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,140 @@ class SessionManager:
         except Exception as e:
             logger.error(f"Ошибка сохранения данных сессий: {e}")
     
+    async def start_phone_auth(
+        self,
+        user_id: int,
+        api_id: int,
+        api_hash: str,
+        phone: str
+    ) -> tuple[bool, str, Optional[TelegramClient]]:
+        """
+        Начинает авторизацию по номеру телефона
+        
+        Returns:
+            (success, message, client)
+        """
+        try:
+            user_id_str = str(user_id)
+            session_path = os.path.join(self.sessions_dir, f"user_{user_id}.session")
+            
+            # Создаем директорию если её нет
+            os.makedirs(self.sessions_dir, exist_ok=True)
+            
+            # Если сессия уже существует, отключаем старую
+            if user_id_str in self.clients:
+                try:
+                    await self.clients[user_id_str].disconnect()
+                except:
+                    pass
+                del self.clients[user_id_str]
+            
+            # Создаем клиент
+            client = TelegramClient(session_path, api_id, api_hash)
+            await client.connect()
+            
+            # Проверяем, авторизован ли уже
+            if await client.is_user_authorized():
+                me = await client.get_me()
+                self.clients[user_id_str] = client
+                self.sessions_data[user_id_str] = {
+                    "api_id": api_id,
+                    "api_hash": api_hash,
+                    "session_path": session_path,
+                    "phone": me.phone,
+                    "username": me.username,
+                    "first_name": me.first_name,
+                    "last_name": me.last_name,
+                    "telegram_user_id": me.id
+                }
+                self.save_sessions_data()
+                return True, f"✅ Уже авторизован: @{me.username or me.phone}", client
+            
+            # Отправляем код
+            await client.send_code_request(phone)
+            
+            # Сохраняем временные данные
+            if not hasattr(self, "_auth_data"):
+                self._auth_data = {}
+            self._auth_data[user_id_str] = {
+                "client": client,
+                "api_id": api_id,
+                "api_hash": api_hash,
+                "phone": phone,
+                "session_path": session_path
+            }
+            
+            return True, "Код отправлен в Telegram", client
+            
+        except Exception as e:
+            logger.error(f"Ошибка начала авторизации: {e}")
+            return False, f"Ошибка: {str(e)}", None
+    
+    async def complete_phone_auth(
+        self,
+        user_id: int,
+        code: str,
+        password: Optional[str] = None
+    ) -> tuple[bool, str]:
+        """
+        Завершает авторизацию по коду
+        
+        Returns:
+            (success, message)
+        """
+        try:
+            user_id_str = str(user_id)
+            
+            if not hasattr(self, "_auth_data") or user_id_str not in self._auth_data:
+                return False, "Сессия авторизации не найдена. Начните заново."
+            
+            auth_data = self._auth_data[user_id_str]
+            client = auth_data["client"]
+            phone = auth_data["phone"]
+            
+            try:
+                # Пытаемся войти с кодом
+                await client.sign_in(phone, code)
+            except SessionPasswordNeededError:
+                if not password:
+                    return False, "NEED_PASSWORD"
+                try:
+                    await client.sign_in(password=password)
+                except Exception as e:
+                    return False, f"Ошибка входа с паролем: {str(e)}"
+            except PhoneCodeInvalidError:
+                return False, "Неверный код. Попробуйте снова."
+            except Exception as e:
+                return False, f"Ошибка входа: {str(e)}"
+            
+            # Получаем информацию о пользователе
+            me = await client.get_me()
+            
+            # Сохраняем данные сессии
+            self.sessions_data[user_id_str] = {
+                "api_id": auth_data["api_id"],
+                "api_hash": auth_data["api_hash"],
+                "session_path": auth_data["session_path"],
+                "phone": me.phone,
+                "username": me.username,
+                "first_name": me.first_name,
+                "last_name": me.last_name,
+                "telegram_user_id": me.id
+            }
+            self.save_sessions_data()
+            
+            # Сохраняем клиент
+            self.clients[user_id_str] = client
+            
+            # Удаляем временные данные
+            del self._auth_data[user_id_str]
+            
+            return True, f"✅ Сессия успешно добавлена!\n\n👤 Аккаунт: @{me.username or me.phone}\n🆔 ID: {me.id}"
+            
+        except Exception as e:
+            logger.error(f"Ошибка завершения авторизации: {e}")
+            return False, f"Ошибка: {str(e)}"
+    
     async def add_session(
         self, 
         user_id: int,
@@ -56,7 +190,7 @@ class SessionManager:
         session_file_path: Optional[str] = None
     ) -> tuple[bool, str]:
         """
-        Добавляет новую сессию для пользователя
+        Добавляет новую сессию для пользователя (из файла)
         
         Args:
             user_id: ID пользователя бота

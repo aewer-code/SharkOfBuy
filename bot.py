@@ -422,6 +422,9 @@ class SessionStates(StatesGroup):
     waiting_api_id = State()
     waiting_api_hash = State()
     waiting_session_file = State()
+    waiting_phone = State()
+    waiting_code = State()
+    waiting_password = State()
     waiting_message_text = State()
     waiting_chat_selection = State()
 
@@ -3487,6 +3490,36 @@ async def session_add_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+# Обработчик для прямого ввода API ID (если пользователь просто отправил число без команды)
+@router.message(
+    F.text.regexp(r'^\d{6,}$') & 
+    ~StateFilter(SessionStates.waiting_api_id) &
+    ~StateFilter(SessionStates.waiting_code) &
+    ~StateFilter(SessionStates.waiting_password) &
+    ~StateFilter(SessionStates.waiting_api_hash) &
+    ~StateFilter(SessionStates.waiting_phone) &
+    ~StateFilter(SessionStates.waiting_session_file)
+)
+async def session_api_id_direct(message: Message, state: FSMContext):
+    """Обработка прямого ввода API ID"""
+    # Проверяем, не в процессе ли другой операции
+    current_state = await state.get_state()
+    if current_state:
+        return  # Игнорируем, если уже в каком-то состоянии
+    
+    try:
+        api_id = int(message.text.strip())
+        await state.update_data(api_id=api_id)
+        await state.set_state(SessionStates.waiting_api_hash)
+        await message.answer(
+            f"✅ API ID: <b>{api_id}</b>\n\n"
+            "Теперь введите ваш <b>API Hash</b> (строка):",
+            parse_mode=ParseMode.HTML
+        )
+    except ValueError:
+        pass  # Игнорируем, если не число
+
+
 @router.message(StateFilter(SessionStates.waiting_api_id))
 async def session_add_api_id(message: Message, state: FSMContext):
     """Обработка API ID"""
@@ -3508,16 +3541,240 @@ async def session_add_api_hash(message: Message, state: FSMContext):
     """Обработка API Hash"""
     api_hash = message.text.strip()
     await state.update_data(api_hash=api_hash)
-    await state.set_state(SessionStates.waiting_session_file)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📁 Загрузить файл сессии", callback_data="session_method_file")],
+        [InlineKeyboardButton(text="📱 Войти по номеру телефона", callback_data="session_method_phone")]
+    ])
+    
     await message.answer(
         f"✅ API Hash: <b>{api_hash}</b>\n\n"
-        "Теперь отправьте файл сессии (<code>.session</code>):\n\n"
-        "💡 Если у вас нет файла сессии, создайте его с помощью Telethon:\n"
-        "<code>from telethon import TelegramClient\n"
-        "client = TelegramClient('session', api_id, api_hash)\n"
-        "client.start()</code>",
+        "Выберите способ авторизации:",
+        reply_markup=keyboard,
         parse_mode=ParseMode.HTML
     )
+
+
+@router.callback_query(F.data == "session_method_file")
+async def session_method_file(callback: CallbackQuery, state: FSMContext):
+    """Выбор метода - файл сессии"""
+    await callback.message.edit_text(
+        "📁 <b>Загрузка файла сессии</b>\n\n"
+        "Отправьте файл сессии (<code>.session</code>):",
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(SessionStates.waiting_session_file)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "session_method_phone")
+async def session_method_phone(callback: CallbackQuery, state: FSMContext):
+    """Выбор метода - номер телефона"""
+    await callback.message.edit_text(
+        "📱 <b>Авторизация по номеру телефона</b>\n\n"
+        "Введите номер телефона в международном формате:\n"
+        "Например: +79001234567",
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(SessionStates.waiting_phone)
+    await callback.answer()
+
+
+@router.message(StateFilter(SessionStates.waiting_phone))
+async def session_add_phone(message: Message, state: FSMContext):
+    """Обработка номера телефона"""
+    phone = message.text.strip()
+    
+    # Проверяем формат номера
+    if not phone.startswith('+'):
+        phone = '+' + phone
+    
+    await state.update_data(phone=phone)
+    
+    data = await state.get_data()
+    api_id = data["api_id"]
+    api_hash = data["api_hash"]
+    
+    await message.answer("⏳ Отправляю код в Telegram...")
+    
+    # Начинаем авторизацию
+    success, msg, client = await session_manager.start_phone_auth(
+        message.from_user.id, api_id, api_hash, phone
+    )
+    
+    if not success:
+        await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
+        await state.clear()
+        return
+    
+    if "Уже авторизован" in msg:
+        await message.answer(msg, parse_mode=ParseMode.HTML)
+        await state.clear()
+        return
+    
+    # Создаем клавиатуру с цифрами для ввода кода
+    code_keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
+            [KeyboardButton(text="4"), KeyboardButton(text="5"), KeyboardButton(text="6")],
+            [KeyboardButton(text="7"), KeyboardButton(text="8"), KeyboardButton(text="9")],
+            [KeyboardButton(text="< Стереть"), KeyboardButton(text="0")],
+            [KeyboardButton(text="✅ Отправить")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False
+    )
+    
+    await message.answer(
+        f"✅ {msg}\n\n"
+        "🔑 <b>Введите код:</b>\n\n"
+        "Код пришел в приложении Telegram.\n"
+        "Используйте клавиатуру ниже для ввода:",
+        reply_markup=code_keyboard,
+        parse_mode=ParseMode.HTML
+    )
+    
+    await state.set_state(SessionStates.waiting_code)
+    await state.update_data(code_input="")
+
+
+@router.message(StateFilter(SessionStates.waiting_code))
+async def session_add_code(message: Message, state: FSMContext):
+    """Обработка кода авторизации"""
+    data = await state.get_data()
+    code_input = data.get("code_input", "")
+    
+    text = message.text.strip()
+    
+    # Обработка кнопок клавиатуры
+    if text == "< Стереть":
+        if code_input:
+            code_input = code_input[:-1]
+            await state.update_data(code_input=code_input)
+            await message.answer(f"🔑 Введите код: {code_input or '_'}")
+        return
+    
+    if text == "✅ Отправить":
+        if not code_input or len(code_input) < 5:
+            await message.answer("❌ Код должен содержать минимум 5 цифр")
+            return
+        
+        await message.answer("⏳ Проверяю код...", reply_markup=None)
+        
+        # Завершаем авторизацию
+        success, msg = await session_manager.complete_phone_auth(
+            message.from_user.id, code_input
+        )
+        
+        if success:
+            await message.answer(
+                f"{msg}\n\n"
+                "Теперь вы можете использовать команду /sessions для управления.",
+                parse_mode=ParseMode.HTML
+            )
+            await state.clear()
+        elif msg == "NEED_PASSWORD":
+            await message.answer(
+                "🔐 <b>Требуется пароль двухфакторной аутентификации</b>\n\n"
+                "Введите пароль:",
+                parse_mode=ParseMode.HTML
+            )
+            await state.set_state(SessionStates.waiting_password)
+            await state.update_data(code=code_input)
+        else:
+            await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
+            # Возвращаемся к вводу кода
+            code_keyboard = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
+                    [KeyboardButton(text="4"), KeyboardButton(text="5"), KeyboardButton(text="6")],
+                    [KeyboardButton(text="7"), KeyboardButton(text="8"), KeyboardButton(text="9")],
+                    [KeyboardButton(text="< Стереть"), KeyboardButton(text="0")],
+                    [KeyboardButton(text="✅ Отправить")]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=False
+            )
+            await message.answer(
+                "🔑 <b>Введите код снова:</b>",
+                reply_markup=code_keyboard,
+                parse_mode=ParseMode.HTML
+            )
+            await state.update_data(code_input="")
+        return
+    
+    # Добавляем цифру
+    if text.isdigit() and len(text) == 1:
+        code_input += text
+        await state.update_data(code_input=code_input)
+        await message.answer(f"🔑 Введите код: {code_input}{'_' * (5 - len(code_input)) if len(code_input) < 5 else ''}")
+    elif text.isdigit() and len(text) >= 5:
+        # Пользователь ввел код целиком
+        await message.answer("⏳ Проверяю код...", reply_markup=None)
+        
+        success, msg = await session_manager.complete_phone_auth(
+            message.from_user.id, text
+        )
+        
+        if success:
+            await message.answer(
+                f"{msg}\n\n"
+                "Теперь вы можете использовать команду /sessions для управления.",
+                parse_mode=ParseMode.HTML
+            )
+            await state.clear()
+        elif msg == "NEED_PASSWORD":
+            await message.answer(
+                "🔐 <b>Требуется пароль двухфакторной аутентификации</b>\n\n"
+                "Введите пароль:",
+                parse_mode=ParseMode.HTML
+            )
+            await state.set_state(SessionStates.waiting_password)
+            await state.update_data(code=text)
+        else:
+            await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
+            code_keyboard = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
+                    [KeyboardButton(text="4"), KeyboardButton(text="5"), KeyboardButton(text="6")],
+                    [KeyboardButton(text="7"), KeyboardButton(text="8"), KeyboardButton(text="9")],
+                    [KeyboardButton(text="< Стереть"), KeyboardButton(text="0")],
+                    [KeyboardButton(text="✅ Отправить")]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=False
+            )
+            await message.answer(
+                "🔑 <b>Введите код снова:</b>",
+                reply_markup=code_keyboard,
+                parse_mode=ParseMode.HTML
+            )
+            await state.update_data(code_input="")
+
+
+@router.message(StateFilter(SessionStates.waiting_password))
+async def session_add_password(message: Message, state: FSMContext):
+    """Обработка пароля двухфакторной аутентификации"""
+    password = message.text.strip()
+    data = await state.get_data()
+    code = data.get("code", "")
+    
+    await message.answer("⏳ Проверяю пароль...")
+    
+    success, msg = await session_manager.complete_phone_auth(
+        message.from_user.id, code, password
+    )
+    
+    if success:
+        await message.answer(
+            f"{msg}\n\n"
+            "Теперь вы можете использовать команду /sessions для управления.",
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
+    
+    await state.clear()
 
 
 @router.message(StateFilter(SessionStates.waiting_session_file), F.document)
