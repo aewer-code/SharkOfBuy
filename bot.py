@@ -994,11 +994,11 @@ async def handle_bet_roulette_text(message: Message, state: FSMContext):
             emoji_result = f"🎰 {slot_value}"
             
             if won:
-            win_amount = int(bet_amount * 2.0)
-            db.update_balance(user_id, win_amount)
-            db.record_game(user_id, "roulette", bet_amount, "win", win_amount, emoji_result)
-            db.add_experience(user_id, 10)
-            
+                win_amount = int(bet_amount * 2.0)
+                db.update_balance(user_id, win_amount)
+                db.record_game(user_id, "roulette", bet_amount, "win", win_amount, emoji_result)
+                db.add_experience(user_id, 10)
+                
                 result_text = (
                     f"🎉🎉🎉 <b>ДЖЕКПОТ! 777!</b> 🎉🎉🎉\n\n"
                     f"🎰 Результат: <b>777</b>\n"
