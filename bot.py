@@ -908,7 +908,9 @@ async def handle_referral_button(message: Message):
     referral_games = row['games'] if row else 0
     conn.close()
     
-    referral_link = f"https://t.me/{BOT_TOKEN.split(':')[0]}?start={user_id}"
+    # Получаем username бота из токена (первые цифры до двоеточия)
+    bot_username = "XcronoBot"  # Замените на реальный username вашего бота
+    referral_link = f"https://t.me/{bot_username}?start={user_id}"
     
     text = (
         "🔗 <b>РЕФЕРАЛЬНАЯ СИСТЕМА</b>\n\n"
