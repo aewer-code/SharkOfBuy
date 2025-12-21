@@ -429,6 +429,156 @@ async def callback_roulette_play(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
 
+@router.callback_query(F.data == "game_guess_number")
+async def callback_game_guess_number(callback: CallbackQuery, state: FSMContext):
+    """Игра Угадай число"""
+    user_id = callback.from_user.id
+    balance = db.get_balance(user_id)
+    
+    if balance < 50:
+        await callback.answer("❌ Недостаточно монет! Минимум 50 монет для игры.", show_alert=True)
+        return
+    
+    text = (
+        "🎯 <b>Угадай число</b>\n\n"
+        "Правила:\n"
+        "• Бросаются 3 кубика (сумма от 3 до 18)\n"
+        "• Угадай сумму всех кубиков\n"
+        "• Коэффициент выигрыша: <b>x2.0</b>\n"
+        "• Минимальная ставка: <b>50 монет</b>\n\n"
+        f"💰 Ваш баланс: <b>{format_number(balance)} монет</b>\n\n"
+        "Введите сумму ставки:"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="50", callback_data="bet_guess_50"),
+            InlineKeyboardButton(text="100", callback_data="bet_guess_100"),
+            InlineKeyboardButton(text="500", callback_data="bet_guess_500")
+        ],
+        [
+            InlineKeyboardButton(text="1000", callback_data="bet_guess_1000"),
+            InlineKeyboardButton(text="5000", callback_data="bet_guess_5000")
+        ],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await state.set_state(GameStates.waiting_bet_guess_number)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("bet_guess_"))
+async def callback_guess_number_bet(callback: CallbackQuery, state: FSMContext):
+    """Выбор суммы ставки для угадай число"""
+    bet_amount = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+    balance = db.get_balance(user_id)
+    
+    if balance < bet_amount:
+        await callback.answer("❌ Недостаточно монет!", show_alert=True)
+        return
+    
+    await state.update_data(bet_amount=bet_amount)
+    
+    text = (
+        f"🎯 <b>Ставка: {format_number(bet_amount)} монет</b>\n\n"
+        "Угадай сумму трех кубиков (от 3 до 18):\n\n"
+        "Выберите число:"
+    )
+    
+    # Создаем кнопки с числами от 3 до 18
+    buttons = []
+    row = []
+    for num in range(3, 19):
+        row.append(InlineKeyboardButton(text=str(num), callback_data=f"guess_{num}"))
+        if len(row) == 4:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="game_guess_number")])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await state.set_state(GameStates.waiting_guess_number)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("guess_"))
+async def callback_guess_number_play(callback: CallbackQuery, state: FSMContext):
+    """Игра угадай число"""
+    guessed_number = int(callback.data.split("_")[1])
+    user_id = callback.from_user.id
+    data = await state.get_data()
+    bet_amount = data.get("bet_amount")
+    
+    if not bet_amount:
+        await callback.answer("❌ Ошибка! Попробуйте снова.", show_alert=True)
+        return
+    
+    balance = db.get_balance(user_id)
+    if balance < bet_amount:
+        await callback.answer("❌ Недостаточно монет!", show_alert=True)
+        return
+    
+    # Списываем ставку
+    db.update_balance(user_id, -bet_amount)
+    
+    # Отправляем 3 эмодзи кубика
+    dice1 = await callback.message.answer_dice(emoji="🎲")
+    dice2 = await callback.message.answer_dice(emoji="🎲")
+    dice3 = await callback.message.answer_dice(emoji="🎲")
+    
+    # Ждем результаты
+    await asyncio.sleep(4)
+    
+    # Получаем значения
+    val1 = dice1.dice.value
+    val2 = dice2.dice.value
+    val3 = dice3.dice.value
+    
+    # Сумма всех кубиков
+    total_sum = val1 + val2 + val3
+    won = (guessed_number == total_sum)
+    
+    emoji_result = f"🎲{val1}+🎲{val2}+🎲{val3}={total_sum}"
+    
+    if won:
+        win_amount = int(bet_amount * 2.0)
+        db.update_balance(user_id, win_amount)
+        db.record_game(user_id, "guess_number", bet_amount, "win", win_amount, emoji_result)
+        db.add_experience(user_id, 10)
+        
+        result_text = (
+            f"🎉 <b>ВЫ УГАДАЛИ!</b>\n\n"
+            f"🎲 Результат: <b>{val1} + {val2} + {val3} = {total_sum}</b>\n"
+            f"🎯 Ваше число: <b>{guessed_number}</b>\n"
+            f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
+            f"💵 Выигрыш: <b>+{format_number(win_amount)} монет</b>\n"
+            f"📈 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
+        )
+    else:
+        db.record_game(user_id, "guess_number", bet_amount, "loss", 0, emoji_result)
+        db.add_experience(user_id, 3)
+        
+        result_text = (
+            f"❌ <b>НЕ УГАДАЛИ</b>\n\n"
+            f"🎲 Результат: <b>{val1} + {val2} + {val3} = {total_sum}</b>\n"
+            f"🎯 Ваше число: <b>{guessed_number}</b>\n"
+            f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
+            f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>\n\n"
+            "💡 <i>Попробуйте еще раз!</i>"
+        )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Играть снова", callback_data="game_guess_number")],
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+    ])
+    
+    await callback.message.answer(result_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await state.clear()
+    await callback.answer()
+
 @router.callback_query(F.data == "game_freespins")
 async def callback_freespins(callback: CallbackQuery):
     """Фриспины"""
