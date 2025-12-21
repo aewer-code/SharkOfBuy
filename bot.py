@@ -1259,9 +1259,271 @@ async def callback_deposit_amount(callback: CallbackQuery):
 @router.callback_query(F.data == "play_balance")
 async def callback_play_balance(callback: CallbackQuery):
     """Игра с обычным балансом"""
-    await callback.answer("Выберите игру из меню")
     await callback_main_menu(callback)
 
+@router.callback_query(F.data == "admin_panel")
+async def callback_admin_panel(callback: CallbackQuery):
+    """Админ панель"""
+    user_id = callback.from_user.id
+    
+    if user_id not in ADMIN_IDS:
+        await callback.answer("❌ Доступ запрещен!", show_alert=True)
+        return
+    
+    # Статистика бота
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) as total FROM users")
+    total_users = cursor.fetchone()['total']
+    
+    cursor.execute("SELECT COUNT(*) as total FROM games")
+    total_games = cursor.fetchone()['total']
+    
+    cursor.execute("SELECT SUM(balance) as total FROM users")
+    total_balance = cursor.fetchone()['total'] or 0
+    
+    conn.close()
+    
+    text = (
+        "⚙️ <b>АДМИН ПАНЕЛЬ</b>\n\n"
+        f"👥 Всего пользователей: {total_users}\n"
+        f"🎮 Всего игр: {total_games}\n"
+        f"💰 Общий баланс: {format_number(total_balance)} монет\n\n"
+        "<i>Выберите действие:</i>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users"),
+            InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")
+        ],
+        [
+            InlineKeyboardButton(text="💰 Выдать монеты", callback_data="admin_give_coins"),
+            InlineKeyboardButton(text="🎁 Создать бонус", callback_data="admin_create_bonus")
+        ],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "top_players")
+async def callback_top_players(callback: CallbackQuery):
+    """Топ игроков"""
+    leaderboard = db.get_leaderboard(10)
+    
+    if not leaderboard:
+        text = "🏆 <b>ТОП ИГРОКОВ</b>\n\nПока нет игроков в рейтинге."
+    else:
+        text = "🏆 <b>ТОП ИГРОКОВ</b>\n\n"
+        for i, player in enumerate(leaderboard, 1):
+            username = player['username'] or f"ID{player['user_id']}"
+            winrate = player['winrate']
+            wins = player['total_wins']
+            games = player['total_wins'] + player['total_losses']
+            balance = db.get_balance(player['user_id'])
+            
+            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+            text += f"{medal} <b>{username}</b>\n"
+            text += f"   📊 Винрейт: {winrate:.2f}% | 💰 {format_number(balance)} монет\n"
+            text += f"   🎮 {wins}/{games} игр\n\n"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="top_players")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "bonuses")
+async def callback_bonuses(callback: CallbackQuery):
+    """Бонусы"""
+    user_id = callback.from_user.id
+    user = db.get_user(user_id)
+    
+    if not user:
+        db.create_user(user_id, callback.from_user.username)
+        user = db.get_user(user_id)
+    
+    can_daily = db.can_claim_daily(user_id)
+    bonus_balance = db.get_bonus_balance(user_id)
+    
+    text = (
+        "🎁 <b>БОНУСЫ</b>\n\n"
+        f"💎 Бонусный баланс: {format_number(bonus_balance)} монет\n\n"
+        "<b>Доступные бонусы:</b>\n"
+    )
+    
+    if can_daily:
+        text += "✅ <b>Ежедневный бонус</b> - доступен\n"
+    else:
+        text += "⏳ <b>Ежедневный бонус</b> - уже получен сегодня\n"
+    
+    text += "\n💡 <i>Больше бонусов скоро!</i>"
+    
+    keyboard_buttons = []
+    if can_daily:
+        keyboard_buttons.append([InlineKeyboardButton(text="🎁 Получить ежедневный бонус", callback_data="daily_bonus")])
+    
+    keyboard_buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "promo_code")
+async def callback_promo_code(callback: CallbackQuery):
+    """Промокод"""
+    text = (
+        "🏷️ <b>ПРОМОКОД</b>\n\n"
+        "Введите промокод для получения бонуса:\n\n"
+        "💡 <i>Промокоды выдаются администрацией</i>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "tasks")
+async def callback_tasks(callback: CallbackQuery):
+    """Задания"""
+    text = (
+        "📝 <b>ЗАДАНИЯ</b>\n\n"
+        "Выполняйте задания и получайте награды!\n\n"
+        "💡 <i>Задания скоро появятся</i>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="earn")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "mini_games")
+async def callback_mini_games(callback: CallbackQuery):
+    """Мини-игры для заработка"""
+    user_id = callback.from_user.id
+    balance = db.get_balance(user_id)
+    
+    text = (
+        "🎯 <b>МИНИ-ИГРЫ</b>\n\n"
+        "Играйте в мини-игры и зарабатывайте монеты!\n\n"
+        f"💰 Ваш баланс: <b>{format_number(balance)} монет</b>\n\n"
+        "<b>Доступные игры:</b>\n"
+        "🎲 <b>Угадай число</b> - угадай число от 1 до 10, выигрыш x2\n"
+        "🎯 <b>Орел или решка</b> - угадай сторону, выигрыш x1.5\n\n"
+        "💡 <i>Выберите игру:</i>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎲 Угадай число", callback_data="mini_guess")],
+        [InlineKeyboardButton(text="🎯 Орел или решка", callback_data="mini_coin")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="earn")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.message(F.text == "🛒 Магазин")
+async def handle_shop_button(message: Message):
+    """Обработка кнопки Магазин"""
+    user_id = message.from_user.id
+    balance = db.get_balance(user_id)
+    
+    text = (
+        "🛒 <b>Магазин</b>\n\n"
+        f"💰 Ваш баланс: <b>{format_number(balance)} монет</b>\n\n"
+        "Выберите категорию:"
+    )
+    
+    await message.answer(text, reply_markup=get_shop_menu(), parse_mode=ParseMode.HTML)
+
+@router.message(F.text == "💰 Заработать")
+async def handle_earn_button(message: Message):
+    """Обработка кнопки Заработать"""
+    user_id = message.from_user.id
+    balance = db.get_balance(user_id)
+    
+    text = (
+        "💰 <b>ЗАРАБОТАТЬ</b>\n\n"
+        f"💰 Ваш баланс: <b>{format_number(balance)} монет</b>\n\n"
+        "Выберите способ заработка:"
+    )
+    
+    await message.answer(text, reply_markup=get_earn_menu(), parse_mode=ParseMode.HTML)
+
+@router.message(F.text == "📊 Статистика")
+async def handle_stats_button(message: Message):
+    """Обработка кнопки Статистика"""
+    user_id = message.from_user.id
+    user = db.get_user(user_id)
+    
+    if not user:
+        db.create_user(user_id, message.from_user.username)
+        user = db.get_user(user_id)
+    
+    winrate = db.get_winrate(user_id)
+    total_games = user['total_wins'] + user['total_losses']
+    
+    text = (
+        "📊 <b>СТАТИСТИКА</b>\n\n"
+        f"🎮 Всего игр: <b>{total_games}</b>\n"
+        f"✅ Побед: <b>{user['total_wins']}</b>\n"
+        f"❌ Поражений: <b>{user['total_losses']}</b>\n"
+        f"📈 Винрейт: <b>{winrate:.2f}%</b>\n"
+        f"💰 Всего поставлено: <b>{format_number(user['total_bet'])} монет</b>\n"
+        f"🏆 Макс. выигрыш: <b>{format_number(user.get('max_win', 0))} монет</b>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+    
+    await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+@router.message(F.text == "ℹ️ Помощь")
+async def handle_help_button(message: Message):
+    """Обработка кнопки Помощь"""
+    text = (
+        "ℹ️ <b>ПОМОЩЬ</b>\n\n"
+        "🎲 <b>Кубики:</b>\n"
+        "Ставка на четное/нечетное\n"
+        "Коэффициент: x1.8\n"
+        "Минимум: 10 монет\n\n"
+        "🎰 <b>Рулетка 777:</b>\n"
+        "Крутите рулетку (🎰)\n"
+        "Выпадает 777 = выигрыш x2.0\n"
+        "Минимум: 50 монет\n\n"
+        "🎯 <b>Угадай число:</b>\n"
+        "Угадай сумму трех кубиков (3-18)\n"
+        "Коэффициент: x2.0\n"
+        "Минимум: 50 монет\n\n"
+        "🎁 <b>Фриспины:</b>\n"
+        "Бесплатные вращения\n"
+        "Выигрыши: 10-50 монет\n"
+        "Доступно 1 раз в 12 часов\n\n"
+        "💰 <b>Заработок:</b>\n"
+        "• Ежедневный бонус (100-300 монет)\n"
+        "• Задания (скоро)\n"
+        "• Мини-игры\n\n"
+        "🎯 <b>Особенность:</b>\n"
+        "Все игры используют честный рандом от Telegram!\n"
+        "Результаты определяются эмодзи-кубиками.\n"
+        "Обмануть невозможно!"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+    ])
+    
+    await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 # ============= ЗАПУСК БОТА =============
 
