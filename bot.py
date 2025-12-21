@@ -960,20 +960,21 @@ async def handle_bet_roulette_text(message: Message, state: FSMContext):
         db.update_balance(user_id, -bet_amount)
         
         bot = message.bot
-        slot1 = await bot.send_dice(message.chat.id, emoji="🎰")
-        slot2 = await bot.send_dice(message.chat.id, emoji="🎰")
-        slot3 = await bot.send_dice(message.chat.id, emoji="🎰")
-        
-        await asyncio.sleep(4)
-        
-        val1 = slot1.dice.value
-        val2 = slot2.dice.value
-        val3 = slot3.dice.value
-        
-        won = (val1 >= 60 and val2 >= 60 and val3 >= 60)
-        emoji_result = f"🎰{val1} 🎰{val2} 🎰{val3}"
-        
-        if won:
+        try:
+            slot1 = await bot.send_dice(message.chat.id, emoji="🎰")
+            slot2 = await bot.send_dice(message.chat.id, emoji="🎰")
+            slot3 = await bot.send_dice(message.chat.id, emoji="🎰")
+            
+            await asyncio.sleep(4)
+            
+            val1 = slot1.dice.value
+            val2 = slot2.dice.value
+            val3 = slot3.dice.value
+            
+            won = (val1 >= 60 and val2 >= 60 and val3 >= 60)
+            emoji_result = f"🎰{val1} 🎰{val2} 🎰{val3}"
+            
+            if won:
             win_amount = int(bet_amount * 2.0)
             db.update_balance(user_id, win_amount)
             db.record_game(user_id, "roulette", bet_amount, "win", win_amount, emoji_result)
@@ -982,8 +983,8 @@ async def handle_bet_roulette_text(message: Message, state: FSMContext):
             result_text = (
                 f"🎉🎉🎉 <b>ДЖЕКПОТ! 777!</b> 🎉🎉🎉\n\n"
                 f"🎰 Результат: <b>{val1} {val2} {val3}</b>\n"
-                f"💰 Ставка: {format_number(bet_amount)} монет\n"
-                f"💵 Выигрыш: <b>{format_number(win_amount)} монет</b>\n"
+                f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
+                f"💵 Выигрыш: <b>+{format_number(win_amount)} монет</b>\n"
                 f"📈 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
             )
         else:
@@ -993,8 +994,9 @@ async def handle_bet_roulette_text(message: Message, state: FSMContext):
             result_text = (
                 f"❌ <b>НЕ ПОВЕЗЛО</b>\n\n"
                 f"🎰 Результат: <b>{val1} {val2} {val3}</b>\n"
-                f"💰 Ставка: {format_number(bet_amount)} монет\n"
-                f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
+                f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
+                f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>\n\n"
+                "💡 <i>Попробуйте еще раз!</i>"
             )
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1002,7 +1004,12 @@ async def handle_bet_roulette_text(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
         ])
         
-        await message.answer(result_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        await bot.send_message(
+            message.chat.id,
+            result_text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
         await state.clear()
     except ValueError:
         await message.answer("❌ Введите число!")
