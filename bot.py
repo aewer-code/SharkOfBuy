@@ -73,14 +73,6 @@ def get_main_menu() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🎯 Угадай число", callback_data="game_guess_number"),
             InlineKeyboardButton(text="🎁 Фриспины", callback_data="game_freespins")
         ],
-        [
-            InlineKeyboardButton(text="🛒 Магазин", callback_data="shop"),
-            InlineKeyboardButton(text="💰 Заработать", callback_data="earn")
-        ],
-        [
-            InlineKeyboardButton(text="📊 Статистика", callback_data="stats"),
-            InlineKeyboardButton(text="🏆 Лидерборд", callback_data="leaderboard")
-        ],
         [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")]
     ])
 
@@ -109,6 +101,14 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(text="⚡ Профиль"),
                 KeyboardButton(text="🔗 Реферальная система")
+            ],
+            [
+                KeyboardButton(text="🛒 Магазин"),
+                KeyboardButton(text="💰 Заработать")
+            ],
+            [
+                KeyboardButton(text="📊 Статистика"),
+                KeyboardButton(text="ℹ️ Помощь")
             ]
         ],
         resize_keyboard=True,
@@ -660,6 +660,26 @@ async def callback_freespins(callback: CallbackQuery):
 async def callback_do_freespin(callback: CallbackQuery):
     """Выполнить фриспин"""
     user_id = callback.from_user.id
+    
+    # Проверяем, может ли пользователь получить фриспин (1 раз в 12 часов)
+    if not db.can_claim_freespin(user_id):
+        user = db.get_user(user_id)
+        last_freespin = user.get('last_freespin')
+        if last_freespin:
+            try:
+                last_date = datetime.strptime(last_freespin, "%Y-%m-%d %H:%M:%S")
+                now = datetime.now()
+                time_diff = now - last_date
+                hours_left = 12 - (time_diff.total_seconds() / 3600)
+                if hours_left > 0:
+                    await callback.answer(
+                        f"⏳ Фриспин доступен через {int(hours_left)} ч. {int((hours_left % 1) * 60)} мин.",
+                        show_alert=True
+                    )
+                    return
+            except:
+                pass
+    
     import random
     
     # Отправляем эмодзи слот-машины
@@ -671,6 +691,9 @@ async def callback_do_freespin(callback: CallbackQuery):
         
         # Получаем значение (1-64 для слот-машины)
         slot_value = slot_message.dice.value
+        
+        # Обновляем время последнего фриспина
+        db.update_last_freespin(user_id)
     except Exception as e:
         logger.error(f"Ошибка при отправке фриспина: {e}")
         await callback.answer("❌ Ошибка! Попробуйте снова.", show_alert=True)
@@ -1097,9 +1120,9 @@ async def handle_profile_button(message: Message):
         f"🏆 Макс. выигрыш: {format_number(max_win)} монет\n"
         f"📈 Винрейт: {winrate:.2f}%\n\n"
         "<b>📊 Общая статистика:</b>\n"
-        f"🥉 Лига: Bronze 🥉\n"
-        f"🤝 Реферальный заработок: {format_number(referral_earnings)} монет\n"
-        f"🗓️ Вы с нами {days_with_us} дней\n\n"
+        f"🥉 Лига: <i>Bronze</i> 🥉\n"
+        f"🤝 Реферальный заработок: <i>{format_number(referral_earnings)} монет</i>\n"
+        f"🗓️ Вы с нами <i>{days_with_us} дней</i>\n\n"
         f"⚙️ ID: <code>{user_id}</code>"
     )
     
