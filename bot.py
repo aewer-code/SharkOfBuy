@@ -50,6 +50,8 @@ db = Database()
 class GameStates(StatesGroup):
     waiting_bet_cubes = State()
     waiting_bet_roulette = State()
+    waiting_bet_guess_number = State()
+    waiting_guess_number = State()
 
 # Роутер
 router = Router()
@@ -68,17 +70,18 @@ def get_main_menu() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🎰 Рулетка", callback_data="game_roulette")
         ],
         [
-            InlineKeyboardButton(text="🎁 Фриспины", callback_data="game_freespins"),
-            InlineKeyboardButton(text="🛒 Магазин", callback_data="shop")
+            InlineKeyboardButton(text="🎯 Угадай число", callback_data="game_guess_number"),
+            InlineKeyboardButton(text="🎁 Фриспины", callback_data="game_freespins")
         ],
         [
-            InlineKeyboardButton(text="💰 Заработать", callback_data="earn"),
-            InlineKeyboardButton(text="📊 Статистика", callback_data="stats")
+            InlineKeyboardButton(text="🛒 Магазин", callback_data="shop"),
+            InlineKeyboardButton(text="💰 Заработать", callback_data="earn")
         ],
         [
-            InlineKeyboardButton(text="🏆 Лидерборд", callback_data="leaderboard"),
-            InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
-        ]
+            InlineKeyboardButton(text="📊 Статистика", callback_data="stats"),
+            InlineKeyboardButton(text="🏆 Лидерборд", callback_data="leaderboard")
+        ],
+        [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")]
     ])
 
 def get_earn_menu() -> InlineKeyboardMarkup:
@@ -371,25 +374,26 @@ async def callback_roulette_play(callback: CallbackQuery, state: FSMContext):
     # Списываем ставку
     db.update_balance(user_id, -bet_amount)
     
-    # Отправляем 3 эмодзи кубика для рулетки
-    dice1 = await callback.message.answer_dice(emoji="🎲")
-    dice2 = await callback.message.answer_dice(emoji="🎲")
-    dice3 = await callback.message.answer_dice(emoji="🎲")
+    # Отправляем 3 эмодзи рулетки (слот-машины)
+    slot1 = await callback.message.answer_dice(emoji="🎰")
+    slot2 = await callback.message.answer_dice(emoji="🎰")
+    slot3 = await callback.message.answer_dice(emoji="🎰")
     
     # Ждем результаты
     await asyncio.sleep(4)
     
-    # Получаем значения
-    val1 = dice1.dice.value
-    val2 = dice2.dice.value
-    val3 = dice3.dice.value
+    # Получаем значения (1-64 для слот-машины)
+    val1 = slot1.dice.value
+    val2 = slot2.dice.value
+    val3 = slot3.dice.value
     
-    # Проверяем на 777: все три кубика должны показать максимальное значение (6)
-    # Это очень редкое событие (1/216 шанс), что соответствует коэффициенту x2.0
-    # 6-6-6 = "777" для выигрыша
-    won = (val1 == 6 and val2 == 6 and val3 == 6)
+    # Проверяем на 777: все три рулетки должны показать максимальное значение (64)
+    # Это очень редкое событие (1/262144 шанс), но для игры сделаем более реалистично:
+    # Если все три >= 60 (очень высокие значения) = выигрыш
+    # Или можно использовать: если сумма >= 180 (среднее 60 на каждую)
+    won = (val1 >= 60 and val2 >= 60 and val3 >= 60)
     
-    emoji_result = f"🎲{val1} 🎲{val2} 🎲{val3}"
+    emoji_result = f"🎰{val1} 🎰{val2} 🎰{val3}"
     
     if won:
         win_amount = int(bet_amount * 2.0)
