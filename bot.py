@@ -146,11 +146,9 @@ async def cmd_start(message: Message):
     else:
         user = db.get_user(user_id)
         balance = user['balance']
-        bonus_balance = db.get_bonus_balance(user_id)
         text = (
             "🎮 <b>XCRONO ИГРОВОЙ БОТ</b>\n\n"
             f"💰 Баланс: <b>{format_number(balance)} монет</b>\n"
-            f"💎 Бонусный баланс: <b>{format_number(bonus_balance)} монет</b>\n"
             f"📊 Уровень: <b>{user['level']}</b>\n"
             f"⭐ Опыт: <b>{user['experience']}/100</b>\n\n"
             "<i>Выберите действие:</i>"
