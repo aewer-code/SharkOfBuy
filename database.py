@@ -18,8 +18,10 @@ class Database:
     
     def get_connection(self):
         """Получить соединение с БД"""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
+        # Включаем WAL режим для лучшей производительности
+        conn.execute("PRAGMA journal_mode=WAL")
         return conn
     
     def init_database(self):
@@ -178,17 +180,22 @@ class Database:
     
     def update_max_win(self, user_id: int, win_amount: int):
         """Обновить максимальный выигрыш"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            UPDATE users 
-            SET max_win = ?
-            WHERE user_id = ? AND (max_win < ? OR max_win IS NULL)
-        """, (win_amount, user_id, win_amount))
-        
-        conn.commit()
-        conn.close()
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE users 
+                SET max_win = ?
+                WHERE user_id = ? AND (max_win < ? OR max_win IS NULL)
+            """, (win_amount, user_id, win_amount))
+            
+            conn.commit()
+            conn.close()
+        except sqlite3.OperationalError as e:
+            logger.error(f"Ошибка обновления max_win: {e}")
+            if 'conn' in locals():
+                conn.close()
     
     def can_claim_daily(self, user_id: int) -> bool:
         """Проверить, может ли пользователь получить ежедневный бонус"""

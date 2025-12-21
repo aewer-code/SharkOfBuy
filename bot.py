@@ -1,6 +1,6 @@
 """
-Бот казино с честной игрой через эмодзи-рандом
-Игры: кубики (чет/нечет), рулетка (777), фриспины
+Xcrono игровой бот с честной игрой через эмодзи-рандом
+Игры: кубики (чет/нечет), рулетка (777), угадай число, фриспины
 """
 import asyncio
 import os
@@ -140,7 +140,7 @@ async def cmd_start(message: Message):
         balance = 1000
         text = (
             "👋 <b>Добро пожаловать, @{username}!</b>\n\n"
-            "🎰 <b>КАЗИНО</b>\n\n"
+            "🎮 <b>XCRONO ИГРОВОЙ БОТ</b>\n\n"
             "🎲 <b>Честная игра через эмодзи Telegram</b>\n"
             "Все результаты определяются случайными эмодзи от Telegram!\n\n"
             f"💰 Ваш стартовый баланс: <b>{format_number(balance)} монет</b>\n\n"
@@ -151,7 +151,7 @@ async def cmd_start(message: Message):
         balance = user['balance']
         bonus_balance = db.get_bonus_balance(user_id)
         text = (
-            "🎰 <b>КАЗИНО</b>\n\n"
+            "🎮 <b>XCRONO ИГРОВОЙ БОТ</b>\n\n"
             f"💰 Баланс: <b>{format_number(balance)} монет</b>\n"
             f"💎 Бонусный баланс: <b>{format_number(bonus_balance)} монет</b>\n"
             f"📊 Уровень: <b>{user['level']}</b>\n"
@@ -862,8 +862,11 @@ async def callback_help(callback: CallbackQuery):
 @router.message(StateFilter(GameStates.waiting_bet_cubes))
 async def handle_bet_cubes_text(message: Message, state: FSMContext):
     """Обработка текстовой ставки для кубиков"""
+    if not message.text or not message.text.strip().isdigit():
+        return  # Игнорируем нечисловые сообщения
+    
     try:
-        bet_amount = int(message.text)
+        bet_amount = int(message.text.strip())
         if bet_amount < 10:
             await message.answer("❌ Минимальная ставка: 10 монет")
             return
@@ -887,14 +890,17 @@ async def handle_bet_cubes_text(message: Message, state: FSMContext):
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML
         )
-    except ValueError:
-        await message.answer("❌ Введите число!")
+    except (ValueError, AttributeError):
+        pass  # Игнорируем ошибки
 
 @router.message(StateFilter(GameStates.waiting_bet_roulette))
 async def handle_bet_roulette_text(message: Message, state: FSMContext):
     """Обработка текстовой ставки для рулетки"""
+    if not message.text or not message.text.strip().isdigit():
+        return  # Игнорируем нечисловые сообщения
+    
     try:
-        bet_amount = int(message.text)
+        bet_amount = int(message.text.strip())
         if bet_amount < 50:
             await message.answer("❌ Минимальная ставка: 50 монет")
             return
@@ -971,19 +977,13 @@ async def handle_play_button(message: Message):
     bonus_balance = db.get_bonus_balance(user_id)
     
     text = (
-        "💎 <b>Выберите тип баланса</b> 💎\n\n"
+        "🎮 <b>ВЫБЕРИТЕ ИГРУ</b>\n\n"
         f"💰 Баланс: <b>{format_number(balance)} монет</b>\n"
-        f"🎁 Бонусный баланс: <b>{format_number(bonus_balance)} монет</b>\n\n"
-        "<i>Выберите, с каким балансом играть:</i>"
+        f"💎 Бонусный баланс: <b>{format_number(bonus_balance)} монет</b>\n\n"
+        "<i>Выберите игру:</i>"
     )
     
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="💰 Баланс", callback_data="play_balance"),
-            InlineKeyboardButton(text="🎁 Бонусный", callback_data="play_bonus")
-        ],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
-    ])
+    keyboard = get_main_menu()
     
     await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
@@ -1013,31 +1013,37 @@ async def handle_profile_button(message: Message):
     
     text = (
         "⚡ <b>ПРОФИЛЬ</b>\n\n"
-        f"💰 Баланс: <b>{format_number(balance)} монет</b>\n"
-        f"💎 Бонусный баланс: <b>{format_number(bonus_balance)} монет</b>\n\n"
+        f"💰 Баланс: {format_number(balance)} монет\n"
+        f"💎 Бонусный баланс: {format_number(bonus_balance)} монет\n\n"
         "<b>🎮 Игровая статистика:</b>\n"
-        f"🎲 Кол-во игр: <b>{total_games}</b>\n"
-        f"💸 Сумма ставок: <b>{format_number(user['total_bet'])} монет</b>\n"
-        f"🏆 Макс. выигрыш: <b>{format_number(max_win)} монет</b>\n"
-        f"📈 Винрейт: <b>{winrate:.2f}%</b>\n\n"
+        f"🎲 Кол-во игр: {total_games}\n"
+        f"💸 Сумма ставок: {format_number(user['total_bet'])} монет\n"
+        f"🏆 Макс. выигрыш: {format_number(max_win)} монет\n"
+        f"📈 Винрейт: {winrate:.2f}%\n\n"
         "<b>📊 Общая статистика:</b>\n"
-        f"🥉 Лига: <b>Bronze</b> 🥉\n"
-        f"🤝 Реферальный заработок: <b>{format_number(referral_earnings)} монет</b>\n"
-        f"🗓️ Вы с нами <b>{days_with_us}</b> дней\n\n"
-        f"⚙️ <b>ID:</b> <code>{user_id}</code>"
+        f"🥉 Лига: Bronze 🥉\n"
+        f"🤝 Реферальный заработок: {format_number(referral_earnings)} монет\n"
+        f"🗓️ Вы с нами {days_with_us} дней\n\n"
+        f"⚙️ ID: <code>{user_id}</code>"
     )
     
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    # Проверяем, является ли пользователь админом
+    is_admin = user_id in ADMIN_IDS
+    
+    keyboard_buttons = [
         [
             InlineKeyboardButton(text="🏆 Топ", callback_data="top_players"),
             InlineKeyboardButton(text="🎁 Бонусы", callback_data="bonuses")
         ],
-        [
-            InlineKeyboardButton(text="🏷️ Промокод", callback_data="promo_code"),
-            InlineKeyboardButton(text="🚀 Комнаты", callback_data="rooms")
-        ],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
-    ])
+        [InlineKeyboardButton(text="🏷️ Промокод", callback_data="promo_code")]
+    ]
+    
+    if is_admin:
+        keyboard_buttons.append([InlineKeyboardButton(text="⚙️ Админ панель", callback_data="admin_panel")])
+    
+    keyboard_buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     
     await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
@@ -1083,8 +1089,7 @@ async def handle_referral_button(message: Message):
         f"👥 Рефералы: <b>{referrals_count}</b>\n"
         f"🎮 Игр пройдено: <b>{referral_games}</b>\n\n"
         f"🔗 <b>Реферальная ссылка:</b>\n"
-        f"<code>{referral_link}</code>\n\n"
-        "<i>Список всех выводов | Лига | 3 уровня рефералки</i>"
+        f"<code>{referral_link}</code>"
     )
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1158,18 +1163,6 @@ async def callback_play_balance(callback: CallbackQuery):
     await callback.answer("Выберите игру из меню")
     await callback_main_menu(callback)
 
-@router.callback_query(F.data == "play_bonus")
-async def callback_play_bonus(callback: CallbackQuery):
-    """Игра с бонусным балансом"""
-    user_id = callback.from_user.id
-    bonus_balance = db.get_bonus_balance(user_id)
-    
-    if bonus_balance < 50:
-        await callback.answer("❌ Недостаточно бонусного баланса! Минимум 50 монет.", show_alert=True)
-        return
-    
-    await callback.answer("Игра с бонусным балансом скоро будет доступна")
-    await callback_main_menu(callback)
 
 # ============= ЗАПУСК БОТА =============
 
@@ -1193,7 +1186,7 @@ async def main():
         ]
         await bot.set_my_commands(commands)
         
-        logger.info("🎰 Бот казино запущен!")
+        logger.info("🎮 Xcrono игровой бот запущен!")
         await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}", exc_info=True)
