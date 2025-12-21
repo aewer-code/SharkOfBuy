@@ -106,10 +106,7 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="🛒 Магазин"),
                 KeyboardButton(text="💰 Заработать")
             ],
-            [
-                KeyboardButton(text="📊 Статистика"),
-                KeyboardButton(text="ℹ️ Помощь")
-            ]
+            [KeyboardButton(text="📊 Статистика")]
         ],
         resize_keyboard=True,
         persistent=True
@@ -1097,7 +1094,6 @@ async def handle_profile_button(message: Message):
         user = db.get_user(user_id)
     
     balance = user['balance']
-    bonus_balance = db.get_bonus_balance(user_id)
     winrate = db.get_winrate(user_id)
     total_games = user['total_wins'] + user['total_losses']
     max_win = user.get('max_win', 0)
@@ -1112,8 +1108,7 @@ async def handle_profile_button(message: Message):
     
     text = (
         "⚡ <b>ПРОФИЛЬ</b>\n\n"
-        f"💰 Баланс: {format_number(balance)} монет\n"
-        f"💎 Бонусный баланс: {format_number(bonus_balance)} монет\n\n"
+        f"💰 Баланс: {format_number(balance)} монет\n\n"
         "<b>🎮 Игровая статистика:</b>\n"
         f"🎲 Кол-во игр: {total_games}\n"
         f"💸 Сумма ставок: {format_number(user['total_bet'])} монет\n"
@@ -1408,11 +1403,9 @@ async def callback_bonuses(callback: CallbackQuery):
         user = db.get_user(user_id)
     
     can_daily = db.can_claim_daily(user_id)
-    bonus_balance = db.get_bonus_balance(user_id)
     
     text = (
         "🎁 <b>БОНУСЫ</b>\n\n"
-        f"💎 Бонусный баланс: {format_number(bonus_balance)} монет\n\n"
         "<b>Доступные бонусы:</b>\n"
     )
     

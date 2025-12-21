@@ -236,6 +236,38 @@ class Database:
         
         return bonus
     
+    def can_claim_freespin(self, user_id: int) -> bool:
+        """Проверить, может ли пользователь получить фриспин (1 раз в 12 часов)"""
+        user = self.get_user(user_id)
+        if not user:
+            return True
+        
+        last_freespin = user.get('last_freespin')
+        if not last_freespin:
+            return True
+        
+        try:
+            last_date = datetime.strptime(last_freespin, "%Y-%m-%d %H:%M:%S")
+            now = datetime.now()
+            time_diff = now - last_date
+            return time_diff.total_seconds() >= 12 * 3600  # 12 часов
+        except:
+            return True
+    
+    def update_last_freespin(self, user_id: int):
+        """Обновить время последнего фриспина"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE users
+            SET last_freespin = ?
+            WHERE user_id = ?
+        """, (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_id))
+        
+        conn.commit()
+        conn.close()
+    
     def record_game(self, user_id: int, game_type: str, bet: int, result: str, 
                    win_amount: int, emoji_result: str):
         """Записать результат игры"""
