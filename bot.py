@@ -530,17 +530,22 @@ async def callback_guess_number_play(callback: CallbackQuery, state: FSMContext)
     db.update_balance(user_id, -bet_amount)
     
     # Отправляем 3 эмодзи кубика
-    dice1 = await callback.message.answer_dice(emoji="🎲")
-    dice2 = await callback.message.answer_dice(emoji="🎲")
-    dice3 = await callback.message.answer_dice(emoji="🎲")
-    
-    # Ждем результаты
-    await asyncio.sleep(4)
-    
-    # Получаем значения
-    val1 = dice1.dice.value
-    val2 = dice2.dice.value
-    val3 = dice3.dice.value
+    try:
+        dice1 = await callback.message.answer_dice(emoji="🎲")
+        dice2 = await callback.message.answer_dice(emoji="🎲")
+        dice3 = await callback.message.answer_dice(emoji="🎲")
+        
+        # Ждем результаты
+        await asyncio.sleep(4)
+        
+        # Получаем значения
+        val1 = dice1.dice.value
+        val2 = dice2.dice.value
+        val3 = dice3.dice.value
+    except Exception as e:
+        logger.error(f"Ошибка при отправке кубиков: {e}")
+        await callback.answer("❌ Ошибка! Попробуйте снова.", show_alert=True)
+        return
     
     # Сумма всех кубиков
     total_sum = val1 + val2 + val3
@@ -613,12 +618,17 @@ async def callback_do_freespin(callback: CallbackQuery):
     import random
     
     # Отправляем эмодзи слот-машины
-    slot_message = await callback.message.answer_dice(emoji="🎰")
-    
-    await asyncio.sleep(4)
-    
-    # Получаем значение (1-64 для слот-машины)
-    slot_value = slot_message.dice.value
+    try:
+        slot_message = await callback.message.answer_dice(emoji="🎰")
+        
+        await asyncio.sleep(4)
+        
+        # Получаем значение (1-64 для слот-машины)
+        slot_value = slot_message.dice.value
+    except Exception as e:
+        logger.error(f"Ошибка при отправке фриспина: {e}")
+        await callback.answer("❌ Ошибка! Попробуйте снова.", show_alert=True)
+        return
     
     # Маленькие выигрыши: 10-50 монет в зависимости от значения
     # Чем выше значение, тем больше выигрыш

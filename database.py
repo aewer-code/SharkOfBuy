@@ -245,17 +245,22 @@ class Database:
         row = cursor.fetchone()
         referrer_id = row['referrer_id'] if row else None
         
+        # Получаем текущий max_win
+        cursor.execute("SELECT max_win FROM users WHERE user_id = ?", (user_id,))
+        row_max = cursor.fetchone()
+        current_max_win = row_max['max_win'] if row_max else 0
+        
         # Обновляем статистику пользователя
         if win_amount > 0:
+            # Обновляем максимальный выигрыш прямо здесь
+            new_max_win = max(win_amount, current_max_win or 0)
             cursor.execute("""
                 UPDATE users 
                 SET total_wins = total_wins + 1,
-                    total_bet = total_bet + ?
+                    total_bet = total_bet + ?,
+                    max_win = ?
                 WHERE user_id = ?
-            """, (bet, user_id))
-            
-            # Обновляем максимальный выигрыш
-            self.update_max_win(user_id, win_amount)
+            """, (bet, new_max_win, user_id))
             
             # Начисляем реферальную комиссию (10% с выигрыша)
             if referrer_id:
