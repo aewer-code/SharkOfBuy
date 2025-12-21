@@ -15,7 +15,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    Dice, BotCommand
+    Dice, BotCommand, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 )
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -106,29 +106,43 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username
     
+    # Обработка реферальной ссылки
+    referrer_id = None
+    if message.text and len(message.text.split()) > 1:
+        try:
+            referrer_id = int(message.text.split()[1])
+            # Проверяем, что пользователь не регистрирует сам себя
+            if referrer_id == user_id:
+                referrer_id = None
+        except ValueError:
+            pass
+    
     # Создаем пользователя, если его нет
     if not db.get_user(user_id):
-        db.create_user(user_id, username)
+        db.create_user(user_id, username, referrer_id)
         balance = 1000
         text = (
-            "🎰 <b>Добро пожаловать в казино!</b>\n\n"
+            "👋 <b>Добро пожаловать, @{username}!</b>\n\n"
+            "🎰 <b>КАЗИНО</b>\n\n"
             "🎲 <b>Честная игра через эмодзи Telegram</b>\n"
             "Все результаты определяются случайными эмодзи от Telegram!\n\n"
             f"💰 Ваш стартовый баланс: <b>{format_number(balance)} монет</b>\n\n"
-            "Выберите действие:"
-        )
+            "<i>Выберите действие:</i>"
+        ).format(username=username or "игрок")
     else:
         user = db.get_user(user_id)
         balance = user['balance']
+        bonus_balance = db.get_bonus_balance(user_id)
         text = (
             "🎰 <b>КАЗИНО</b>\n\n"
             f"💰 Баланс: <b>{format_number(balance)} монет</b>\n"
+            f"💎 Бонусный баланс: <b>{format_number(bonus_balance)} монет</b>\n"
             f"📊 Уровень: <b>{user['level']}</b>\n"
             f"⭐ Опыт: <b>{user['experience']}/100</b>\n\n"
-            "Выберите действие:"
+            "<i>Выберите действие:</i>"
         )
     
-    await message.answer(text, reply_markup=get_main_menu(), parse_mode=ParseMode.HTML)
+    await message.answer(text, reply_markup=get_main_keyboard(), parse_mode=ParseMode.HTML)
 
 @router.message(Command("balance"))
 async def cmd_balance(message: Message):
@@ -767,6 +781,220 @@ async def handle_bet_roulette_text(message: Message, state: FSMContext):
         await state.clear()
     except ValueError:
         await message.answer("❌ Введите число!")
+
+# ============= ОБРАБОТЧИКИ КНОПОК ПОСТОЯННОЙ КЛАВИАТУРЫ =============
+
+@router.message(F.text == "🚀 ИГРАТЬ")
+async def handle_play_button(message: Message):
+    """Обработка кнопки ИГРАТЬ"""
+    user_id = message.from_user.id
+    user = db.get_user(user_id)
+    
+    if not user:
+        db.create_user(user_id, message.from_user.username)
+        user = db.get_user(user_id)
+    
+    balance = user['balance']
+    bonus_balance = db.get_bonus_balance(user_id)
+    
+    text = (
+        "💎 <b>Выберите тип баланса</b> 💎\n\n"
+        f"💰 Баланс: <b>{format_number(balance)} монет</b>\n"
+        f"🎁 Бонусный баланс: <b>{format_number(bonus_balance)} монет</b>\n\n"
+        "<i>Выберите, с каким балансом играть:</i>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="💰 Баланс", callback_data="play_balance"),
+            InlineKeyboardButton(text="🎁 Бонусный", callback_data="play_bonus")
+        ],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+    
+    await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+@router.message(F.text == "⚡ Профиль")
+async def handle_profile_button(message: Message):
+    """Обработка кнопки Профиль"""
+    user_id = message.from_user.id
+    user = db.get_user(user_id)
+    
+    if not user:
+        db.create_user(user_id, message.from_user.username)
+        user = db.get_user(user_id)
+    
+    balance = user['balance']
+    bonus_balance = db.get_bonus_balance(user_id)
+    winrate = db.get_winrate(user_id)
+    total_games = user['total_wins'] + user['total_losses']
+    max_win = user.get('max_win', 0)
+    referral_earnings = user.get('referral_earnings', 0)
+    
+    # Вычисляем дни с нами
+    try:
+        created_at = datetime.strptime(user.get('created_at', ''), "%Y-%m-%d %H:%M:%S")
+        days_with_us = (datetime.now() - created_at).days
+    except:
+        days_with_us = 0
+    
+    text = (
+        "⚡ <b>ПРОФИЛЬ</b>\n\n"
+        f"💰 Баланс: <b>{format_number(balance)} монет</b>\n"
+        f"💎 Бонусный баланс: <b>{format_number(bonus_balance)} монет</b>\n\n"
+        "<b>🎮 Игровая статистика:</b>\n"
+        f"🎲 Кол-во игр: <b>{total_games}</b>\n"
+        f"💸 Сумма ставок: <b>{format_number(user['total_bet'])} монет</b>\n"
+        f"🏆 Макс. выигрыш: <b>{format_number(max_win)} монет</b>\n"
+        f"📈 Винрейт: <b>{winrate:.2f}%</b>\n\n"
+        "<b>📊 Общая статистика:</b>\n"
+        f"🥉 Лига: <b>Bronze</b> 🥉\n"
+        f"🤝 Реферальный заработок: <b>{format_number(referral_earnings)} монет</b>\n"
+        f"🗓️ Вы с нами <b>{days_with_us}</b> дней\n\n"
+        f"⚙️ <b>ID:</b> <code>{user_id}</code>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🏆 Топ", callback_data="top_players"),
+            InlineKeyboardButton(text="🎁 Бонусы", callback_data="bonuses")
+        ],
+        [
+            InlineKeyboardButton(text="🏷️ Промокод", callback_data="promo_code"),
+            InlineKeyboardButton(text="🚀 Комнаты", callback_data="rooms")
+        ],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+    
+    await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+@router.message(F.text == "🔗 Реферальная система")
+async def handle_referral_button(message: Message):
+    """Обработка кнопки Реферальная система"""
+    user_id = message.from_user.id
+    user = db.get_user(user_id)
+    
+    if not user:
+        db.create_user(user_id, message.from_user.username)
+        user = db.get_user(user_id)
+    
+    referral_earnings = user.get('referral_earnings', 0)
+    referrals_count = user.get('referrals_count', 0)
+    balance = user['balance']
+    
+    # Получаем статистику игр рефералов
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT COUNT(*) as games FROM games g
+        JOIN users u ON g.user_id = u.user_id
+        WHERE u.referrer_id = ?
+    """, (user_id,))
+    row = cursor.fetchone()
+    referral_games = row['games'] if row else 0
+    conn.close()
+    
+    referral_link = f"https://t.me/{BOT_TOKEN.split(':')[0]}?start={user_id}"
+    
+    text = (
+        "🔗 <b>РЕФЕРАЛЬНАЯ СИСТЕМА</b>\n\n"
+        "Твоя комиссия — <b>10%</b> с выигрышных ставок рефералов.\n"
+        "(80% нашей прибыли)\n\n"
+        "<b>📊 Общая информация:</b>\n"
+        f"💰 Баланс: <b>{format_number(balance)} монет</b>\n"
+        f"🥉 Лига: <b>Bronze</b>\n\n"
+        "<b>📈 За всё время:</b>\n"
+        f"💵 Заработано: <b>{format_number(referral_earnings)} монет</b>\n"
+        f"👥 Рефералы: <b>{referrals_count}</b>\n"
+        f"🎮 Игр пройдено: <b>{referral_games}</b>\n\n"
+        f"🔗 <b>Реферальная ссылка:</b>\n"
+        f"<code>{referral_link}</code>\n\n"
+        "<i>Список всех выводов | Лига | 3 уровня рефералки</i>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📊 Статистика", callback_data="referral_stats"),
+            InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="deposit")
+        ],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+    
+    await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+@router.callback_query(F.data == "deposit")
+async def callback_deposit(callback: CallbackQuery):
+    """Пополнение баланса"""
+    user_id = callback.from_user.id
+    balance = db.get_balance(user_id)
+    
+    text = (
+        "💸 <b>Пришлите сумму монет для игры</b> 👇\n\n"
+        "Минимум: <b>50 монет</b>\n"
+        f"💰 Баланс: <b>{format_number(balance)} монет</b>\n\n"
+        "<i>Введите сумму для пополнения (минимум 50 монет):</i>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="50", callback_data="deposit_50"),
+            InlineKeyboardButton(text="100", callback_data="deposit_100"),
+            InlineKeyboardButton(text="500", callback_data="deposit_500")
+        ],
+        [
+            InlineKeyboardButton(text="1000", callback_data="deposit_1000"),
+            InlineKeyboardButton(text="5000", callback_data="deposit_5000")
+        ],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("deposit_"))
+async def callback_deposit_amount(callback: CallbackQuery):
+    """Пополнение баланса на указанную сумму"""
+    amount = int(callback.data.split("_")[1])
+    
+    if amount < 50:
+        await callback.answer("❌ Минимум 50 монет!", show_alert=True)
+        return
+    
+    user_id = callback.from_user.id
+    db.update_balance(user_id, amount)
+    new_balance = db.get_balance(user_id)
+    
+    text = (
+        f"✅ <b>Баланс пополнен!</b>\n\n"
+        f"💰 Пополнено: <b>+{format_number(amount)} монет</b>\n"
+        f"📈 Новый баланс: <b>{format_number(new_balance)} монет</b>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer("✅ Баланс пополнен!")
+
+@router.callback_query(F.data == "play_balance")
+async def callback_play_balance(callback: CallbackQuery):
+    """Игра с обычным балансом"""
+    await callback.answer("Выберите игру из меню")
+    await callback_main_menu(callback)
+
+@router.callback_query(F.data == "play_bonus")
+async def callback_play_bonus(callback: CallbackQuery):
+    """Игра с бонусным балансом"""
+    user_id = callback.from_user.id
+    bonus_balance = db.get_bonus_balance(user_id)
+    
+    if bonus_balance < 50:
+        await callback.answer("❌ Недостаточно бонусного баланса! Минимум 50 монет.", show_alert=True)
+        return
+    
+    await callback.answer("Игра с бонусным балансом скоро будет доступна")
+    await callback_main_menu(callback)
 
 # ============= ЗАПУСК БОТА =============
 

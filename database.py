@@ -33,23 +33,38 @@ class Database:
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
                 balance INTEGER DEFAULT 1000,
+                bonus_balance INTEGER DEFAULT 0,
                 total_wins INTEGER DEFAULT 0,
                 total_losses INTEGER DEFAULT 0,
                 total_bet INTEGER DEFAULT 0,
+                max_win INTEGER DEFAULT 0,
                 last_daily_bonus TEXT,
                 level INTEGER DEFAULT 1,
                 experience INTEGER DEFAULT 0,
                 inventory TEXT DEFAULT '[]',
+                referrer_id INTEGER,
+                referral_earnings INTEGER DEFAULT 0,
+                referrals_count INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
         
-        # Миграция: добавляем колонку total_bet, если её нет
-        try:
-            cursor.execute("ALTER TABLE users ADD COLUMN total_bet INTEGER DEFAULT 0")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # Колонка уже существует
+        # Миграции: добавляем новые колонки, если их нет
+        migrations = [
+            "ALTER TABLE users ADD COLUMN total_bet INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN bonus_balance INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN max_win INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN referrer_id INTEGER",
+            "ALTER TABLE users ADD COLUMN referral_earnings INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN referrals_count INTEGER DEFAULT 0"
+        ]
+        
+        for migration in migrations:
+            try:
+                cursor.execute(migration)
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass  # Колонка уже существует
         
         # Таблица игр (история)
         cursor.execute("""
@@ -98,26 +113,38 @@ class Database:
             return dict(row)
         return None
     
-    def create_user(self, user_id: int, username: str = None):
+    def create_user(self, user_id: int, username: str = None, referrer_id: int = None):
         """Создать нового пользователя"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute("""
-            INSERT OR IGNORE INTO users (user_id, username, balance, last_daily_bonus)
-            VALUES (?, ?, 1000, ?)
-        """, (user_id, username, "2000-01-01 00:00:00"))
+            INSERT OR IGNORE INTO users (user_id, username, balance, last_daily_bonus, referrer_id)
+            VALUES (?, ?, 1000, ?, ?)
+        """, (user_id, username, "2000-01-01 00:00:00", referrer_id))
+        
+        # Если есть реферер, увеличиваем счетчик его рефералов
+        if referrer_id:
+            cursor.execute("""
+                UPDATE users 
+                SET referrals_count = referrals_count + 1
+                WHERE user_id = ?
+            """, (referrer_id,))
         
         conn.commit()
         conn.close()
-        logger.info(f"Создан пользователь {user_id}")
+        logger.info(f"Создан пользователь {user_id}, реферер: {referrer_id}")
     
-    def update_balance(self, user_id: int, amount: int):
+    def update_balance(self, user_id: int, amount: int, use_bonus: bool = False):
         """Обновить баланс пользователя"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+        if use_bonus:
+            cursor.execute("UPDATE users SET bonus_balance = bonus_balance + ? WHERE user_id = ?", (amount, user_id))
+        else:
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+        
         conn.commit()
         conn.close()
     
@@ -125,6 +152,43 @@ class Database:
         """Получить баланс пользователя"""
         user = self.get_user(user_id)
         return user['balance'] if user else 1000
+    
+    def get_bonus_balance(self, user_id: int) -> int:
+        """Получить бонусный баланс пользователя"""
+        user = self.get_user(user_id)
+        return user.get('bonus_balance', 0) if user else 0
+    
+    def add_referral_earnings(self, referrer_id: int, amount: int):
+        """Добавить реферальный заработок"""
+        if not referrer_id:
+            return
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE users 
+            SET referral_earnings = referral_earnings + ?,
+                balance = balance + ?
+            WHERE user_id = ?
+        """, (amount, amount, referrer_id))
+        
+        conn.commit()
+        conn.close()
+    
+    def update_max_win(self, user_id: int, win_amount: int):
+        """Обновить максимальный выигрыш"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE users 
+            SET max_win = ?
+            WHERE user_id = ? AND (max_win < ? OR max_win IS NULL)
+        """, (win_amount, user_id, win_amount))
+        
+        conn.commit()
+        conn.close()
     
     def can_claim_daily(self, user_id: int) -> bool:
         """Проверить, может ли пользователь получить ежедневный бонус"""
@@ -169,6 +233,11 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         
+        # Получаем реферера для начисления комиссии
+        cursor.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        referrer_id = row['referrer_id'] if row else None
+        
         # Обновляем статистику пользователя
         if win_amount > 0:
             cursor.execute("""
@@ -177,6 +246,14 @@ class Database:
                     total_bet = total_bet + ?
                 WHERE user_id = ?
             """, (bet, user_id))
+            
+            # Обновляем максимальный выигрыш
+            self.update_max_win(user_id, win_amount)
+            
+            # Начисляем реферальную комиссию (10% с выигрыша)
+            if referrer_id:
+                commission = int(win_amount * 0.10)
+                self.add_referral_earnings(referrer_id, commission)
         else:
             cursor.execute("""
                 UPDATE users 
