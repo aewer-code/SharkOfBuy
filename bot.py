@@ -1004,15 +1004,19 @@ async def handle_bet_roulette_text(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
         ])
         
-        await bot.send_message(
-            message.chat.id,
-            result_text,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
-        )
-        await state.clear()
+            await bot.send_message(
+                message.chat.id,
+                result_text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML
+            )
+            await state.clear()
+        except Exception as e:
+            logger.error(f"Ошибка в рулетке: {e}")
+            await message.answer("❌ Ошибка! Попробуйте снова.")
+            await state.clear()
     except ValueError:
-        await message.answer("❌ Введите число!")
+        pass  # Игнорируем ошибки
 
 # ============= ОБРАБОТЧИКИ КНОПОК ПОСТОЯННОЙ КЛАВИАТУРЫ =============
 
