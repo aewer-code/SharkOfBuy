@@ -1070,12 +1070,9 @@ async def handle_play_button(message: Message):
         user = db.get_user(user_id)
     
     balance = user['balance']
-    bonus_balance = db.get_bonus_balance(user_id)
-    
     text = (
         "🎮 <b>ВЫБЕРИТЕ ИГРУ</b>\n\n"
-        f"💰 Баланс: <b>{format_number(balance)} монет</b>\n"
-        f"💎 Бонусный баланс: <b>{format_number(bonus_balance)} монет</b>\n\n"
+        f"💰 Баланс: <b>{format_number(balance)} монет</b>\n\n"
         "<i>Выберите игру:</i>"
     )
     
