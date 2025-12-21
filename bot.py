@@ -1120,9 +1120,9 @@ async def handle_profile_button(message: Message):
         f"🏆 Макс. выигрыш: {format_number(max_win)} монет\n"
         f"📈 Винрейт: {winrate:.2f}%\n\n"
         "<b>📊 Общая статистика:</b>\n"
-        f"🥉 Лига: <i>Bronze</i> 🥉\n"
-        f"🤝 Реферальный заработок: <i>{format_number(referral_earnings)} монет</i>\n"
-        f"🗓️ Вы с нами <i>{days_with_us} дней</i>\n\n"
+        f"🥉 Лига: Bronze 🥉\n"
+        f"🤝 Реферальный заработок: {format_number(referral_earnings)} монет\n"
+        f"🗓️ Вы с нами {days_with_us} дней\n\n"
         f"⚙️ ID: <code>{user_id}</code>"
     )
     
@@ -1192,10 +1192,7 @@ async def handle_referral_button(message: Message):
     )
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📊 Статистика", callback_data="referral_stats"),
-            InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="deposit")
-        ],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="referral_stats")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
     
