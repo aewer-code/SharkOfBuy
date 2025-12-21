@@ -98,6 +98,20 @@ def get_shop_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
 
+def get_main_keyboard() -> ReplyKeyboardMarkup:
+    """Постоянная клавиатура внизу экрана"""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🚀 ИГРАТЬ")],
+            [
+                KeyboardButton(text="⚡ Профиль"),
+                KeyboardButton(text="🔗 Реферальная система")
+            ]
+        ],
+        resize_keyboard=True,
+        persistent=True
+    )
+
 # ============= ОБРАБОТЧИКИ КОМАНД =============
 
 @router.message(Command("start"))
