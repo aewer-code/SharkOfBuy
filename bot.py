@@ -279,7 +279,8 @@ async def callback_cubes_play(callback: CallbackQuery, state: FSMContext):
     
     # Отправляем эмодзи кубика
     try:
-        dice_message = await callback.message.answer_dice(emoji="🎲")
+        bot = callback.bot
+        dice_message = await bot.send_dice(callback.message.chat.id, emoji="🎲")
         
         # Ждем результат
         await asyncio.sleep(4)
@@ -324,7 +325,14 @@ async def callback_cubes_play(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
     ])
     
-    await callback.message.answer(result_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    # Используем bot для отправки сообщения, чтобы callback работал
+    bot = callback.bot
+    await bot.send_message(
+        callback.message.chat.id,
+        result_text,
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
     await state.clear()
     await callback.answer()
 
@@ -430,7 +438,14 @@ async def callback_roulette_play(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
     ])
     
-    await callback.message.answer(result_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    # Используем bot для отправки сообщения, чтобы callback работал
+    bot = callback.bot
+    await bot.send_message(
+        callback.message.chat.id,
+        result_text,
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
     await state.clear()
     await callback.answer()
 
@@ -531,9 +546,10 @@ async def callback_guess_number_play(callback: CallbackQuery, state: FSMContext)
     
     # Отправляем 3 эмодзи кубика
     try:
-        dice1 = await callback.message.answer_dice(emoji="🎲")
-        dice2 = await callback.message.answer_dice(emoji="🎲")
-        dice3 = await callback.message.answer_dice(emoji="🎲")
+        bot = callback.bot
+        dice1 = await bot.send_dice(callback.message.chat.id, emoji="🎲")
+        dice2 = await bot.send_dice(callback.message.chat.id, emoji="🎲")
+        dice3 = await bot.send_dice(callback.message.chat.id, emoji="🎲")
         
         # Ждем результаты
         await asyncio.sleep(4)
@@ -585,7 +601,14 @@ async def callback_guess_number_play(callback: CallbackQuery, state: FSMContext)
         [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
     ])
     
-    await callback.message.answer(result_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    # Используем bot для отправки сообщения, чтобы callback работал
+    bot = callback.bot
+    await bot.send_message(
+        callback.message.chat.id,
+        result_text,
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
     await state.clear()
     await callback.answer()
 
@@ -619,7 +642,8 @@ async def callback_do_freespin(callback: CallbackQuery):
     
     # Отправляем эмодзи слот-машины
     try:
-        slot_message = await callback.message.answer_dice(emoji="🎰")
+        bot = callback.bot
+        slot_message = await bot.send_dice(callback.message.chat.id, emoji="🎰")
         
         await asyncio.sleep(4)
         
