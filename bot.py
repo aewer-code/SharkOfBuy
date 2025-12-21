@@ -681,7 +681,13 @@ async def callback_do_freespin(callback: CallbackQuery):
         [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
     ])
     
-    await callback.message.answer(result_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    bot = callback.bot
+    await bot.send_message(
+        callback.message.chat.id,
+        result_text,
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
     await callback.answer()
 
 @router.callback_query(F.data == "earn")
