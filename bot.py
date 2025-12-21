@@ -991,7 +991,7 @@ async def handle_bet_roulette_text(message: Message, state: FSMContext):
             db.add_experience(user_id, 3)
             
             result_text = (
-                f"❌ <b>Не повезло</b>\n\n"
+                f"❌ <b>НЕ ПОВЕЗЛО</b>\n\n"
                 f"🎰 Результат: <b>{val1} {val2} {val3}</b>\n"
                 f"💰 Ставка: {format_number(bet_amount)} монет\n"
                 f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
