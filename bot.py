@@ -93,7 +93,7 @@ def get_shop_menu() -> InlineKeyboardMarkup:
     """Меню магазина"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⚡ Бусты", callback_data="shop_boosts")],
-        [InlineKeyboardButton(text="🎨 Визуал", callback_data="shop_visual")],
+        [InlineKeyboardButton(text="🏆 Титулы", callback_data="shop_titles")],
         [InlineKeyboardButton(text="📦 Кейсы", callback_data="shop_cases")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
@@ -601,15 +601,17 @@ async def callback_shop_boosts(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     await callback.answer()
 
-@router.callback_query(F.data == "shop_visual")
-async def callback_shop_visual(callback: CallbackQuery):
-    """Визуальные предметы"""
+@router.callback_query(F.data == "shop_titles")
+async def callback_shop_titles(callback: CallbackQuery):
+    """Титулы в магазине"""
     text = (
-        "🎨 <b>Визуальные предметы</b>\n\n"
-        "👤 Аватар "Профи" - <b>300 монет</b>\n"
-        "🖼️ Рамка "Золотая" - <b>500 монет</b>\n"
-        "✨ Анимация выигрыша - <b>400 монет</b>\n"
-        "🏆 Титул "Удачливый" - <b>600 монет</b>\n\n"
+        "🏆 <b>Титулы</b>\n\n"
+        "Титулы отображаются в вашем профиле и статистике:\n\n"
+        "🎯 Новичок - <b>Бесплатно</b> (при регистрации)\n"
+        "⭐ Удачливый - <b>500 монет</b>\n"
+        "💎 Богач - <b>1000 монет</b>\n"
+        "👑 Легенда - <b>2000 монет</b>\n"
+        "🔥 Мастер - <b>5000 монет</b>\n\n"
         "💡 Скоро в продаже!"
     )
     
