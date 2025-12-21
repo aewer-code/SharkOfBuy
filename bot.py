@@ -1,12 +1,11 @@
 """
-Бот для рассылки сообщений в Telegram чаты
-Функционал рассылки с поддержкой сессий
+Бот казино с честной игрой через эмодзи-рандом
+Игры: кубики (чет/нечет), рулетка (777), фриспины
 """
 import asyncio
 import os
 import logging
-import re
-import shutil
+from datetime import datetime
 from typing import Optional
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, Router
@@ -16,93 +15,16 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton, BotCommand, ReplyKeyboardRemove
+    Dice, BotCommand
 )
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from session_manager import session_manager
-
-
-def parse_time_interval(time_str: str) -> float:
-    """
-    Парсит строку времени в секунды
-    Поддерживает форматы: 1ч, 30м, 1ч30м, 1ч30м30с, 2д1ч3м30с
-    """
-    time_str = time_str.lower().strip()
-    total_seconds = 0
-    
-    # Дни
-    days_match = re.search(r'(\d+)д', time_str)
-    if days_match:
-        total_seconds += int(days_match.group(1)) * 86400
-    
-    # Часы
-    hours_match = re.search(r'(\d+)ч', time_str)
-    if hours_match:
-        total_seconds += int(hours_match.group(1)) * 3600
-    
-    # Минуты
-    minutes_match = re.search(r'(\d+)м', time_str)
-    if minutes_match:
-        total_seconds += int(minutes_match.group(1)) * 60
-    
-    # Секунды
-    seconds_match = re.search(r'(\d+)с', time_str)
-    if seconds_match:
-        total_seconds += int(seconds_match.group(1))
-    
-    # Если ничего не найдено, пробуем как число (секунды)
-    if total_seconds == 0:
-        try:
-            total_seconds = float(time_str)
-        except ValueError:
-            total_seconds = 60  # По умолчанию
-    
-    return total_seconds
-
-
-def format_time_interval(seconds: float) -> str:
-    """Форматирует секунды в читаемый формат"""
-    seconds = int(seconds)
-    
-    if seconds < 60:
-        return f"{seconds} сек"
-    elif seconds < 3600:
-        minutes = seconds // 60
-        secs = seconds % 60
-        if secs > 0:
-            return f"{minutes}м {secs}с"
-        return f"{minutes}м"
-    elif seconds < 86400:
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        secs = seconds % 60
-        parts = []
-        if hours > 0:
-            parts.append(f"{hours}ч")
-        if minutes > 0:
-            parts.append(f"{minutes}м")
-        if secs > 0 and len(parts) < 2:
-            parts.append(f"{secs}с")
-        return " ".join(parts) if parts else "0"
-    else:
-        days = seconds // 86400
-        hours = (seconds % 86400) // 3600
-        minutes = (seconds % 86400 % 3600) // 60
-        parts = []
-        if days > 0:
-            parts.append(f"{days}д")
-        if hours > 0:
-            parts.append(f"{hours}ч")
-        if minutes > 0:
-            parts.append(f"{minutes}м")
-        return " ".join(parts) if parts else "0"
-
+from database import Database
 
 # Загружаем переменные окружения
 load_dotenv()
 
-# ============= КОНФИГУРАЦИЯ =============
+# Конфигурация
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден в переменных окружения!")
@@ -121,750 +43,730 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ============= СОСТОЯНИЯ =============
-class SessionStates(StatesGroup):
-    waiting_api_id = State()
-    waiting_api_hash = State()
-    waiting_session_file = State()
-    waiting_phone = State()
-    waiting_code = State()
-    waiting_password = State()
-    waiting_chats_file = State()
+# Инициализация БД
+db = Database()
 
-# ============= РОУТЕР =============
+# Состояния FSM
+class GameStates(StatesGroup):
+    waiting_bet_cubes = State()
+    waiting_bet_roulette = State()
+
+# Роутер
 router = Router()
 
-# ============= ОБРАБОТЧИКИ =============
+# ============= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =============
+
+def format_number(num: int) -> str:
+    """Форматировать число с разделителями"""
+    return f"{num:,}".replace(",", " ")
+
+def get_main_menu() -> InlineKeyboardMarkup:
+    """Главное меню"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🎲 Кубики", callback_data="game_cubes"),
+            InlineKeyboardButton(text="🎰 Рулетка", callback_data="game_roulette")
+        ],
+        [
+            InlineKeyboardButton(text="🎁 Фриспины", callback_data="game_freespins"),
+            InlineKeyboardButton(text="🛒 Магазин", callback_data="shop")
+        ],
+        [
+            InlineKeyboardButton(text="💰 Заработать", callback_data="earn"),
+            InlineKeyboardButton(text="📊 Статистика", callback_data="stats")
+        ],
+        [
+            InlineKeyboardButton(text="🏆 Лидерборд", callback_data="leaderboard"),
+            InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
+        ]
+    ])
+
+def get_earn_menu() -> InlineKeyboardMarkup:
+    """Меню заработка"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎁 Ежедневный бонус", callback_data="daily_bonus")],
+        [InlineKeyboardButton(text="📋 Задания", callback_data="tasks")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+
+def get_shop_menu() -> InlineKeyboardMarkup:
+    """Меню магазина"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚡ Бусты", callback_data="shop_boosts")],
+        [InlineKeyboardButton(text="🎨 Визуал", callback_data="shop_visual")],
+        [InlineKeyboardButton(text="📦 Кейсы", callback_data="shop_cases")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+
+# ============= ОБРАБОТЧИКИ КОМАНД =============
+
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    """Стартовое сообщение"""
+    """Стартовая команда"""
     user_id = message.from_user.id
-    session_data = session_manager.get_user_session(user_id)
+    username = message.from_user.username
     
-    text = (
-        "🤖 <b>Что может делать этот бот?</b>\n\n"
-        "С помощью этого бота можно подключить расширение на аккаунт. "
-        "Нажимай кнопку, чтобы продолжить 👇"
-    )
-    
-    if not session_data:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Подключить аккаунт", callback_data="session_add")],
-        ])
-    else:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Мои чаты", callback_data="session_chats")],
-            [InlineKeyboardButton(text="📤 Рассылка", callback_data="session_broadcast")],
-            [InlineKeyboardButton(text="⚙️ Настройки", callback_data="session_settings")],
-        ])
-    
-    # Удаляем старую клавиатуру (ReplyKeyboardMarkup), если она есть
-    # Используем ReplyKeyboardRemove для удаления клавиатуры
-    await message.answer(
-        text, 
-        reply_markup=keyboard, 
-        parse_mode=ParseMode.HTML
-    )
-    
-    # Отправляем сообщение с удалением клавиатуры, чтобы убрать старую ReplyKeyboardMarkup
-    try:
-        await message.answer("", reply_markup=ReplyKeyboardRemove(remove_keyboard=True))
-    except:
-        pass
-
-
-# Обработчик пароля двухфакторной аутентификации (должен быть ПЕРЕД обработчиком прямого ввода)
-@router.message(StateFilter(SessionStates.waiting_password))
-async def session_add_password(message: Message, state: FSMContext):
-    """Обработка пароля двухфакторной аутентификации"""
-    logger.info(f"🔍 session_add_password вызван: user_id={message.from_user.id}, text={message.text}")
-    
-    password = message.text.strip()
-    data = await state.get_data()
-    code = data.get("code", "")
-    
-    await message.answer("⏳ Проверяю пароль...")
-    
-    success, msg = await session_manager.complete_phone_auth(
-        message.from_user.id, code, password
-    )
-    
-    if success:
-        await message.answer(
-            f"{msg}\n\n"
-            "Теперь вы можете использовать команды для рассылки.",
-            parse_mode=ParseMode.HTML
+    # Создаем пользователя, если его нет
+    if not db.get_user(user_id):
+        db.create_user(user_id, username)
+        balance = 1000
+        text = (
+            "🎰 <b>Добро пожаловать в казино!</b>\n\n"
+            "🎲 <b>Честная игра через эмодзи Telegram</b>\n"
+            "Все результаты определяются случайными эмодзи от Telegram!\n\n"
+            f"💰 Ваш стартовый баланс: <b>{format_number(balance)} монет</b>\n\n"
+            "Выберите действие:"
         )
     else:
-        await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
+        user = db.get_user(user_id)
+        balance = user['balance']
+        text = (
+            "🎰 <b>Казино</b>\n\n"
+            f"💰 Баланс: <b>{format_number(balance)} монет</b>\n"
+            f"📊 Уровень: <b>{user['level']}</b>\n"
+            f"⭐ Опыт: <b>{user['experience']}/100</b>\n\n"
+            "Выберите действие:"
+        )
     
-    await state.clear()
+    await message.answer(text, reply_markup=get_main_menu(), parse_mode=ParseMode.HTML)
 
+@router.message(Command("balance"))
+async def cmd_balance(message: Message):
+    """Проверить баланс"""
+    user_id = message.from_user.id
+    balance = db.get_balance(user_id)
+    await message.answer(f"💰 Ваш баланс: <b>{format_number(balance)} монет</b>", parse_mode=ParseMode.HTML)
 
-# Обработчик номера телефона при состоянии waiting_phone (должен быть ПЕРЕД обработчиком прямого ввода)
-@router.message(StateFilter(SessionStates.waiting_phone))
-async def session_add_phone(message: Message, state: FSMContext):
-    """Обработка номера телефона"""
-    logger.info(f"🔍 session_add_phone вызван: user_id={message.from_user.id}, text={message.text}")
+# ============= ОБРАБОТЧИКИ CALLBACK =============
+
+@router.callback_query(F.data == "main_menu")
+async def callback_main_menu(callback: CallbackQuery):
+    """Главное меню"""
+    user_id = callback.from_user.id
+    user = db.get_user(user_id)
+    if not user:
+        db.create_user(user_id, callback.from_user.username)
+        user = db.get_user(user_id)
     
-    if not message.text:
-        await message.answer("❌ Номер телефона не может быть пустым. Введите снова:")
-        return
-    
-    phone = message.text.strip()
-    
-    if not phone.startswith('+'):
-        phone = '+' + phone
-    
-    await state.update_data(phone=phone)
-    
-    data = await state.get_data()
-    api_id = data["api_id"]
-    api_hash = data["api_hash"]
-    
-    await message.answer("⏳ Отправляю код в Telegram...")
-    
-    success, msg, client = await session_manager.start_phone_auth(
-        message.from_user.id, api_id, api_hash, phone
+    balance = user['balance']
+    text = (
+        "🎰 <b>Казино</b>\n\n"
+        f"💰 Баланс: <b>{format_number(balance)} монет</b>\n"
+        f"📊 Уровень: <b>{user['level']}</b>\n"
+        f"⭐ Опыт: <b>{user['experience']}/100</b>\n\n"
+        "Выберите действие:"
     )
-    
-    if not success:
-        await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
-        await state.clear()
-        return
+    await callback.message.edit_text(text, reply_markup=get_main_menu(), parse_mode=ParseMode.HTML)
+    await callback.answer()
 
-    if "Уже авторизован" in msg:
-        await message.answer(msg, parse_mode=ParseMode.HTML)
-        await state.clear()
-        return
-
-    code_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="1", callback_data="code_1"),
-         InlineKeyboardButton(text="2", callback_data="code_2"),
-         InlineKeyboardButton(text="3", callback_data="code_3")],
-        [InlineKeyboardButton(text="4", callback_data="code_4"),
-         InlineKeyboardButton(text="5", callback_data="code_5"),
-         InlineKeyboardButton(text="6", callback_data="code_6")],
-        [InlineKeyboardButton(text="7", callback_data="code_7"),
-         InlineKeyboardButton(text="8", callback_data="code_8"),
-         InlineKeyboardButton(text="9", callback_data="code_9")],
-        [InlineKeyboardButton(text="< Стереть", callback_data="code_delete"),
-         InlineKeyboardButton(text="0", callback_data="code_0")],
-        [InlineKeyboardButton(text="✅ Отправить", callback_data="code_submit")]
-    ])
+@router.callback_query(F.data == "game_cubes")
+async def callback_game_cubes(callback: CallbackQuery, state: FSMContext):
+    """Игра в кубики"""
+    user_id = callback.from_user.id
+    balance = db.get_balance(user_id)
     
-    # Отправляем сообщение с кнопками и сохраняем его ID
-    code_message = await message.answer(
-        f"✅ Код отправлен в Telegram\n\n"
-        "🔑 <b>Введите код:</b> _____\n\n"
-        "Код пришел в приложении Telegram.\n"
-        "Используйте кнопки ниже для ввода:",
-        reply_markup=code_keyboard,
-        parse_mode=ParseMode.HTML
+    if balance < 10:
+        await callback.answer("❌ Недостаточно монет! Минимум 10 монет для игры.", show_alert=True)
+        return
+    
+    text = (
+        "🎲 <b>Игра в кубики</b>\n\n"
+        "Правила:\n"
+        "• Ставка на четное или нечетное\n"
+        "• Коэффициент выигрыша: <b>x1.8</b>\n"
+        "• Минимальная ставка: <b>10 монет</b>\n\n"
+        f"💰 Ваш баланс: <b>{format_number(balance)} монет</b>\n\n"
+        "Введите сумму ставки (или выберите):"
     )
-    await state.set_state(SessionStates.waiting_code)
-    await state.update_data(code_input="", code_message_id=code_message.message_id)
-
-
-# Обработчик API Hash при состоянии waiting_api_hash (должен быть ПЕРЕД обработчиком прямого ввода)
-@router.message(SessionStates.waiting_api_hash)
-async def session_add_api_hash(message: Message, state: FSMContext):
-    """Обработка API Hash"""
-    logger.info(f"🔍 session_add_api_hash вызван: user_id={message.from_user.id}, text={message.text}, состояние={await state.get_state()}")
-    
-    # Проверяем, что состояние действительно waiting_api_hash
-    current_state = await state.get_state()
-    if current_state != SessionStates.waiting_api_hash.state:
-        logger.info(f"⏭️ session_add_api_hash: пропускаем, состояние {current_state} не waiting_api_hash")
-        return
-    
-    if not message.text:
-        await message.answer("❌ API Hash не может быть пустым. Введите снова:")
-        return
-    
-    # Проверяем, что это не номер телефона (начинается с +)
-    if message.text.strip().startswith('+'):
-        logger.info(f"⏭️ session_add_api_hash: пропускаем, это похоже на номер телефона")
-        return
-    
-    api_hash = message.text.strip()
-    await state.update_data(api_hash=api_hash)
-    logger.info(f"✅ API Hash принят, длина: {len(api_hash)}")
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📁 Загрузить файл сессии", callback_data="session_method_file")],
-        [InlineKeyboardButton(text="📱 Войти по номеру телефона", callback_data="session_method_phone")]
+        [
+            InlineKeyboardButton(text="10", callback_data="bet_cubes_10"),
+            InlineKeyboardButton(text="50", callback_data="bet_cubes_50"),
+            InlineKeyboardButton(text="100", callback_data="bet_cubes_100")
+        ],
+        [
+            InlineKeyboardButton(text="500", callback_data="bet_cubes_500"),
+            InlineKeyboardButton(text="1000", callback_data="bet_cubes_1000")
+        ],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
     
-    await message.answer(
-        f"✅ API Hash: <b>{api_hash}</b>\n\n"
-        "Выберите способ авторизации:",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await state.set_state(GameStates.waiting_bet_cubes)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("bet_cubes_"))
+async def callback_bet_cubes_amount(callback: CallbackQuery, state: FSMContext):
+    """Выбор суммы ставки для кубиков"""
+    bet_amount = int(callback.data.split("_")[-1])
+    user_id = callback.from_user.id
+    balance = db.get_balance(user_id)
+    
+    if balance < bet_amount:
+        await callback.answer("❌ Недостаточно монет!", show_alert=True)
+        return
+    
+    await state.update_data(bet_amount=bet_amount)
+    
+    text = (
+        f"🎲 <b>Ставка: {format_number(bet_amount)} монет</b>\n\n"
+        "Выберите, на что ставите:"
     )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚪ Четное", callback_data="cubes_even"),
+            InlineKeyboardButton(text="⚫ Нечетное", callback_data="cubes_odd")
+        ],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="game_cubes")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
 
+@router.callback_query(F.data.startswith("cubes_"))
+async def callback_cubes_play(callback: CallbackQuery, state: FSMContext):
+    """Игра в кубики"""
+    user_id = callback.from_user.id
+    data = await state.get_data()
+    bet_amount = data.get("bet_amount")
+    
+    if not bet_amount:
+        await callback.answer("❌ Ошибка! Попробуйте снова.", show_alert=True)
+        return
+    
+    choice = "even" if callback.data == "cubes_even" else "odd"
+    balance = db.get_balance(user_id)
+    
+    if balance < bet_amount:
+        await callback.answer("❌ Недостаточно монет!", show_alert=True)
+        return
+    
+    # Списываем ставку
+    db.update_balance(user_id, -bet_amount)
+    
+    # Отправляем эмодзи кубика
+    dice_message = await callback.message.answer_dice(emoji="🎲")
+    
+    # Ждем результат
+    await asyncio.sleep(4)
+    
+    # Получаем значение кубика (1-6)
+    dice_value = dice_message.dice.value
+    
+    # Определяем четное или нечетное
+    is_even = dice_value % 2 == 0
+    won = (choice == "even" and is_even) or (choice == "odd" and not is_even)
+    
+    if won:
+        win_amount = int(bet_amount * 1.8)
+        db.update_balance(user_id, win_amount)
+        db.record_game(user_id, "cubes", bet_amount, "win", win_amount, f"🎲 {dice_value}")
+        db.add_experience(user_id, 5)
+        
+        result_text = (
+            f"🎉 <b>Вы выиграли!</b>\n\n"
+            f"🎲 Выпало: <b>{dice_value}</b> ({'четное' if is_even else 'нечетное'})\n"
+            f"💰 Ставка: {format_number(bet_amount)} монет\n"
+            f"💵 Выигрыш: <b>{format_number(win_amount)} монет</b>\n"
+            f"📈 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
+        )
+    else:
+        db.record_game(user_id, "cubes", bet_amount, "loss", 0, f"🎲 {dice_value}")
+        db.add_experience(user_id, 2)
+        
+        result_text = (
+            f"❌ <b>Вы проиграли</b>\n\n"
+            f"🎲 Выпало: <b>{dice_value}</b> ({'четное' if is_even else 'нечетное'})\n"
+            f"💰 Ставка: {format_number(bet_amount)} монет\n"
+            f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
+        )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Играть снова", callback_data="game_cubes")],
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+    ])
+    
+    await callback.message.answer(result_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await state.clear()
+    await callback.answer()
 
-# Обработчик API ID при состоянии waiting_api_id (должен быть ПЕРЕД обработчиком прямого ввода)
-@router.message(SessionStates.waiting_api_id)
-async def session_add_api_id(message: Message, state: FSMContext):
-    """Обработка API ID"""
-    logger.info(f"🔍 session_add_api_id вызван: user_id={message.from_user.id}, text={message.text}")
+@router.callback_query(F.data == "game_roulette")
+async def callback_game_roulette(callback: CallbackQuery, state: FSMContext):
+    """Игра в рулетку"""
+    user_id = callback.from_user.id
+    balance = db.get_balance(user_id)
+    
+    if balance < 50:
+        await callback.answer("❌ Недостаточно монет! Минимум 50 монет для игры.", show_alert=True)
+        return
+    
+    text = (
+        "🎰 <b>Рулетка 777</b>\n\n"
+        "Правила:\n"
+        "• Выпадает 777 = выигрыш <b>x2.0</b>\n"
+        "• Иначе = проигрыш\n"
+        "• Минимальная ставка: <b>50 монет</b>\n\n"
+        f"💰 Ваш баланс: <b>{format_number(balance)} монет</b>\n\n"
+        "Введите сумму ставки:"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="50", callback_data="bet_roulette_50"),
+            InlineKeyboardButton(text="100", callback_data="bet_roulette_100"),
+            InlineKeyboardButton(text="500", callback_data="bet_roulette_500")
+        ],
+        [
+            InlineKeyboardButton(text="1000", callback_data="bet_roulette_1000"),
+            InlineKeyboardButton(text="5000", callback_data="bet_roulette_5000")
+        ],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await state.set_state(GameStates.waiting_bet_roulette)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("bet_roulette_"))
+async def callback_roulette_play(callback: CallbackQuery, state: FSMContext):
+    """Игра в рулетку"""
+    bet_amount = int(callback.data.split("_")[-1])
+    user_id = callback.from_user.id
+    balance = db.get_balance(user_id)
+    
+    if balance < bet_amount:
+        await callback.answer("❌ Недостаточно монет!", show_alert=True)
+        return
+    
+    # Списываем ставку
+    db.update_balance(user_id, -bet_amount)
+    
+    # Отправляем 3 эмодзи кубика для рулетки
+    dice1 = await callback.message.answer_dice(emoji="🎲")
+    dice2 = await callback.message.answer_dice(emoji="🎲")
+    dice3 = await callback.message.answer_dice(emoji="🎲")
+    
+    # Ждем результаты
+    await asyncio.sleep(4)
+    
+    # Получаем значения
+    val1 = dice1.dice.value
+    val2 = dice2.dice.value
+    val3 = dice3.dice.value
+    
+    # Проверяем на 777: все три кубика должны показать максимальное значение (6)
+    # Это очень редкое событие (1/216 шанс), что соответствует коэффициенту x2.0
+    # 6-6-6 = "777" для выигрыша
+    won = (val1 == 6 and val2 == 6 and val3 == 6)
+    
+    emoji_result = f"🎲{val1} 🎲{val2} 🎲{val3}"
+    
+    if won:
+        win_amount = int(bet_amount * 2.0)
+        db.update_balance(user_id, win_amount)
+        db.record_game(user_id, "roulette", bet_amount, "win", win_amount, emoji_result)
+        db.add_experience(user_id, 10)
+        
+        result_text = (
+            f"🎉🎉🎉 <b>ДЖЕКПОТ! 777!</b> 🎉🎉🎉\n\n"
+            f"🎰 Результат: <b>{val1} {val2} {val3}</b>\n"
+            f"💰 Ставка: {format_number(bet_amount)} монет\n"
+            f"💵 Выигрыш: <b>{format_number(win_amount)} монет</b>\n"
+            f"📈 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
+        )
+    else:
+        db.record_game(user_id, "roulette", bet_amount, "loss", 0, emoji_result)
+        db.add_experience(user_id, 3)
+        
+        result_text = (
+            f"❌ <b>Не повезло</b>\n\n"
+            f"🎰 Результат: <b>{val1} {val2} {val3}</b>\n"
+            f"💰 Ставка: {format_number(bet_amount)} монет\n"
+            f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>\n\n"
+            "💡 Попробуйте еще раз!"
+        )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Играть снова", callback_data="game_roulette")],
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+    ])
+    
+    await callback.message.answer(result_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await state.clear()
+    await callback.answer()
+
+@router.callback_query(F.data == "game_freespins")
+async def callback_freespins(callback: CallbackQuery):
+    """Фриспины"""
+    user_id = callback.from_user.id
+    balance = db.get_balance(user_id)
+    
+    text = (
+        "🎁 <b>Фриспины</b>\n\n"
+        "Бесплатные вращения с маленькими выигрышами!\n"
+        "Используйте фриспины для получения монет.\n\n"
+        f"💰 Ваш баланс: <b>{format_number(balance)} монет</b>\n\n"
+        "Нажмите кнопку для бесплатного вращения:"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎰 Крутить бесплатно", callback_data="do_freespin")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "do_freespin")
+async def callback_do_freespin(callback: CallbackQuery):
+    """Выполнить фриспин"""
+    user_id = callback.from_user.id
+    import random
+    
+    # Отправляем эмодзи слот-машины
+    slot_message = await callback.message.answer_dice(emoji="🎰")
+    
+    await asyncio.sleep(4)
+    
+    # Получаем значение (1-64 для слот-машины)
+    slot_value = slot_message.dice.value
+    
+    # Маленькие выигрыши: 10-50 монет в зависимости от значения
+    # Чем выше значение, тем больше выигрыш
+    if slot_value >= 60:
+        win_amount = random.randint(40, 50)
+    elif slot_value >= 40:
+        win_amount = random.randint(25, 40)
+    elif slot_value >= 20:
+        win_amount = random.randint(15, 25)
+    else:
+        win_amount = random.randint(10, 15)
+    
+    db.update_balance(user_id, win_amount)
+    db.record_game(user_id, "freespin", 0, "win", win_amount, f"🎰 {slot_value}")
+    db.add_experience(user_id, 1)
+    
+    result_text = (
+        f"🎁 <b>Фриспин завершен!</b>\n\n"
+        f"🎰 Результат: <b>{slot_value}</b>\n"
+        f"💵 Выигрыш: <b>{format_number(win_amount)} монет</b>\n"
+        f"📈 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Крутить еще", callback_data="do_freespin")],
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+    ])
+    
+    await callback.message.answer(result_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "earn")
+async def callback_earn(callback: CallbackQuery):
+    """Меню заработка"""
+    user_id = callback.from_user.id
+    user = db.get_user(user_id)
+    
+    can_daily = db.can_claim_daily(user_id)
+    daily_text = "✅ Доступен" if can_daily else "⏳ Уже получен сегодня"
+    
+    text = (
+        "💰 <b>Заработать монеты</b>\n\n"
+        f"🎁 Ежедневный бонус: {daily_text}\n"
+        "📋 Задания: доступны\n\n"
+        "Выберите способ заработка:"
+    )
+    
+    await callback.message.edit_text(text, reply_markup=get_earn_menu(), parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "daily_bonus")
+async def callback_daily_bonus(callback: CallbackQuery):
+    """Ежедневный бонус"""
+    user_id = callback.from_user.id
+    
+    if not db.can_claim_daily(user_id):
+        await callback.answer("❌ Вы уже получили бонус сегодня! Приходите завтра.", show_alert=True)
+        return
+    
+    bonus = db.claim_daily_bonus(user_id)
+    new_balance = db.get_balance(user_id)
+    
+    text = (
+        f"🎁 <b>Ежедневный бонус получен!</b>\n\n"
+        f"💰 Бонус: <b>{format_number(bonus)} монет</b>\n"
+        f"📈 Новый баланс: <b>{format_number(new_balance)} монет</b>\n\n"
+        "Приходите завтра за новым бонусом!"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="earn")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "stats")
+async def callback_stats(callback: CallbackQuery):
+    """Статистика"""
+    user_id = callback.from_user.id
+    user = db.get_user(user_id)
+    
+    if not user:
+        db.create_user(user_id, callback.from_user.username)
+        user = db.get_user(user_id)
+    
+    winrate = db.get_winrate(user_id)
+    total_games = user['total_wins'] + user['total_losses']
+    
+    text = (
+        "📊 <b>Ваша статистика</b>\n\n"
+        f"💰 Баланс: <b>{format_number(user['balance'])} монет</b>\n"
+        f"📈 Уровень: <b>{user['level']}</b>\n"
+        f"⭐ Опыт: <b>{user['experience']}/100</b>\n\n"
+        f"🎮 Всего игр: <b>{total_games}</b>\n"
+        f"✅ Побед: <b>{user['total_wins']}</b>\n"
+        f"❌ Поражений: <b>{user['total_losses']}</b>\n"
+        f"📊 Винрейт: <b>{winrate:.2f}%</b>\n"
+        f"💵 Всего поставлено: <b>{format_number(user['total_bet'])} монет</b>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "leaderboard")
+async def callback_leaderboard(callback: CallbackQuery):
+    """Лидерборд по винрейту"""
+    leaderboard = db.get_leaderboard(10)
+    
+    if not leaderboard:
+        text = "🏆 <b>Лидерборд</b>\n\nПока нет игроков в рейтинге."
+    else:
+        text = "🏆 <b>Лидерборд по винрейту</b>\n\n"
+        for i, player in enumerate(leaderboard, 1):
+            username = player['username'] or f"ID{player['user_id']}"
+            winrate = player['winrate']
+            wins = player['total_wins']
+            games = player['total_wins'] + player['total_losses']
+            
+            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+            text += f"{medal} <b>{username}</b>\n"
+            text += f"   📊 {winrate:.2f}% ({wins}/{games} игр)\n\n"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="leaderboard")],
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "shop")
+async def callback_shop(callback: CallbackQuery):
+    """Магазин"""
+    user_id = callback.from_user.id
+    balance = db.get_balance(user_id)
+    
+    text = (
+        "🛒 <b>Магазин</b>\n\n"
+        f"💰 Ваш баланс: <b>{format_number(balance)} монет</b>\n\n"
+        "Выберите категорию:"
+    )
+    
+    await callback.message.edit_text(text, reply_markup=get_shop_menu(), parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "shop_boosts")
+async def callback_shop_boosts(callback: CallbackQuery):
+    """Бусты в магазине"""
+    text = (
+        "⚡ <b>Бусты и улучшения</b>\n\n"
+        "🔄 Увеличение ежедневного бонуса +10% - <b>500 монет</b>\n"
+        "📈 Увеличение лимита ставок +100 - <b>300 монет</b>\n"
+        "🎁 5 дополнительных фриспинов - <b>200 монет</b>\n"
+        "🛡️ Защита от проигрыша (1 раз) - <b>150 монет</b>\n\n"
+        "💡 Скоро в продаже!"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад в магазин", callback_data="shop")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "shop_visual")
+async def callback_shop_visual(callback: CallbackQuery):
+    """Визуальные предметы"""
+    text = (
+        "🎨 <b>Визуальные предметы</b>\n\n"
+        "👤 Аватар "Профи" - <b>300 монет</b>\n"
+        "🖼️ Рамка "Золотая" - <b>500 монет</b>\n"
+        "✨ Анимация выигрыша - <b>400 монет</b>\n"
+        "🏆 Титул "Удачливый" - <b>600 монет</b>\n\n"
+        "💡 Скоро в продаже!"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад в магазин", callback_data="shop")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "shop_cases")
+async def callback_shop_cases(callback: CallbackQuery):
+    """Кейсы в магазине"""
+    text = (
+        "📦 <b>Кейсы</b>\n\n"
+        "📦 Обычный кейс (10-100 монет) - <b>100 монет</b>\n"
+        "📦 Редкий кейс (50-300 монет) - <b>300 монет</b>\n"
+        "📦 Эпический кейс (200-1000 монет) - <b>500 монет</b>\n\n"
+        "💡 Скоро в продаже!"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад в магазин", callback_data="shop")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+@router.callback_query(F.data == "help")
+async def callback_help(callback: CallbackQuery):
+    """Помощь"""
+    text = (
+        "ℹ️ <b>Помощь</b>\n\n"
+        "🎲 <b>Кубики:</b>\n"
+        "Ставка на четное/нечетное\n"
+        "Коэффициент: x1.8\n"
+        "Минимум: 10 монет\n\n"
+        "🎰 <b>Рулетка 777:</b>\n"
+        "Выпадает 777 = выигрыш x2.0\n"
+        "Минимум: 50 монет\n\n"
+        "🎁 <b>Фриспины:</b>\n"
+        "Бесплатные вращения\n"
+        "Выигрыши: 10-50 монет\n\n"
+        "💰 <b>Заработок:</b>\n"
+        "• Ежедневный бонус (100-300 монет)\n"
+        "• Задания (скоро)\n\n"
+        "🎯 <b>Особенность:</b>\n"
+        "Все игры используют честный рандом от Telegram!\n"
+        "Результаты определяются эмодзи-кубиками.\n"
+        "Обмануть невозможно!"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+# Обработка текстовых ставок
+@router.message(StateFilter(GameStates.waiting_bet_cubes))
+async def handle_bet_cubes_text(message: Message, state: FSMContext):
+    """Обработка текстовой ставки для кубиков"""
     try:
-        api_id = int(message.text.strip())
-        await state.update_data(api_id=api_id)
-        await state.set_state(SessionStates.waiting_api_hash)
-        logger.info(f"✅ API ID {api_id} принят, переходим к API Hash")
+        bet_amount = int(message.text)
+        if bet_amount < 10:
+            await message.answer("❌ Минимальная ставка: 10 монет")
+            return
+        
+        balance = db.get_balance(message.from_user.id)
+        if balance < bet_amount:
+            await message.answer("❌ Недостаточно монет!")
+            return
+        
+        await state.update_data(bet_amount=bet_amount)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⚪ Четное", callback_data="cubes_even"),
+                InlineKeyboardButton(text="⚫ Нечетное", callback_data="cubes_odd")
+            ]
+        ])
+        
         await message.answer(
-            f"✅ API ID: <b>{api_id}</b>\n\n"
-            "Теперь введите ваш <b>API Hash</b> (строка):",
+            f"🎲 Ставка: <b>{format_number(bet_amount)} монет</b>\n\nВыберите, на что ставите:",
+            reply_markup=keyboard,
             parse_mode=ParseMode.HTML
         )
     except ValueError:
-        logger.error(f"❌ Ошибка парсинга API ID: {message.text}")
-        await message.answer("❌ API ID должен быть числом. Введите снова:")
+        await message.answer("❌ Введите число!")
 
-
-# Обработчик команд с префиксом точки (должен быть ПЕРЕД обработчиком прямого ввода)
-@router.message(F.text.startswith("."))
-async def handle_dot_command(message: Message, state: FSMContext):
-    """Обработка команд с префиксом точки"""
-    logger.info(f"🔍 handle_dot_command вызван: user_id={message.from_user.id}, text={message.text}")
-    
-    text = message.text.strip()
-    command = text.split()[0].lower() if text.split() else ""
-    args = text.split()[1:] if len(text.split()) > 1 else []
-    
-    user_id = message.from_user.id
-    
-    # Проверяем наличие сессии
-    session_data = session_manager.get_user_session(user_id)
-    if not session_data and command not in [".команды", ".помощь", ".help"]:
-        await message.answer(
-            "❌ Сначала подключите аккаунт через /start",
-            parse_mode=ParseMode.HTML
-        )
-        return
-    
-    # Команда .спам
-    if command in [".спам", ".spam", ".флуд", ".flood"]:
-        logger.info(f"🔍 Команда .спам: args={args}")
-        if len(args) < 3:
-            await message.answer(
-                "❌ <b>Использование:</b>\n"
-                "<code>.спам 'сообщение' 'количество' 'интервал'</code>\n\n"
-                "Пример: <code>.спам 'Привет' 10 5</code>\n"
-                "Отправит 'Привет' 10 раз с интервалом 5 секунд",
-                parse_mode=ParseMode.HTML
-            )
-            return
-        
-        # Парсим аргументы
-        try:
-            msg_text = args[0].strip("'\"")
-            count = int(args[1])
-            # Парсим интервал (поддержка форматов: секунды, 1ч, 30м, 1ч30м)
-            try:
-                delay = float(args[2])
-            except ValueError:
-                delay = parse_time_interval(args[2])
-        except:
-            await message.answer("❌ Неверный формат аргументов")
-            return
-
-        # Получаем ID текущего чата
-        chat_id = message.chat.id
-        
-        delay_display = format_time_interval(delay)
-        await message.answer(f"⏳ Начинаю рассылку: {count} сообщений с интервалом {delay_display}...")
-        
-        # Отправляем сообщения через сессию пользователя
-        total_success = 0
-        total_failed = 0
-        
-        for i in range(count):
-            success, failed, errors = await session_manager.send_message_to_chats(
-                user_id, msg_text, [chat_id], delay=delay
-            )
-            total_success += success
-            total_failed += failed
-        
-        await message.answer(
-            f"✅ <b>Рассылка завершена!</b>\n\n"
-            f"✅ Успешно: {total_success}\n"
-            f"❌ Ошибок: {total_failed}",
-            parse_mode=ParseMode.HTML
-        )
-        return
-    
-    # Команда .команды
-    if command in [".команды", ".помощь", ".help", ".commands"]:
-        await message.answer(
-            "📋 <b>Доступные команды:</b>\n\n"
-            "<code>.спам 'текст' количество интервал</code> - Рассылка в текущий чат\n"
-            "<code>.чаты</code> - Загрузить список чатов из .txt файла\n"
-            "<code>.рассылка 'текст' интервал</code> - Рассылка по всем чатам из списка\n\n"
-            "<b>Форматы интервала:</b>\n"
-            "• Секунды: <code>60</code>, <code>3600</code>\n"
-            "• Время: <code>1ч</code>, <code>30м</code>, <code>1ч30м</code>, <code>2д1ч</code>\n\n"
-            "💡 <b>Важно:</b> Интервал обязателен для рассылки!\n"
-            "💡 Все команды работают с префиксом точки",
-            parse_mode=ParseMode.HTML
-        )
-        return
-    
-    # Команда .чаты
-    if command in [".чаты", ".chats"]:
-        await message.answer(
-            "📋 <b>Загрузка списка чатов</b>\n\n"
-            "Отправьте .txt файл со списком ссылок на чаты.\n"
-            "Формат:\n"
-            "<code>https://t.me/reklamnyy_chat\n"
-            "https://t.me/piarchattttt</code>",
-            parse_mode=ParseMode.HTML
-        )
-        await state.set_state(SessionStates.waiting_chats_file)
-        return
-    
-    # Команда .рассылка
-    if command in [".рассылка", ".broadcast", ".рассыл"]:
-        if not args or len(args) < 2:
-            await message.answer(
-                "❌ <b>Использование:</b>\n"
-                "<code>.рассылка 'текст сообщения' интервал</code>\n\n"
-                "Примеры:\n"
-                "<code>.рассылка 'Привет' 60</code> - интервал 60 секунд\n"
-                "<code>.рассылка 'Привет' 1ч</code> - интервал 1 час\n"
-                "<code>.рассылка 'Привет' 30м</code> - интервал 30 минут\n"
-                "<code>.рассылка 'Привет' 1ч30м</code> - интервал 1 час 30 минут",
-                parse_mode=ParseMode.HTML
-            )
-            return
-        
-        # Парсим аргументы: текст и интервал
-        # Последний аргумент - интервал, остальное - текст
-        # Последний аргумент - интервал
-        delay_str = args[-1]
-        # Все остальное - текст сообщения
-        msg_text = " ".join(args[:-1]).strip("'\"")
-        
-        # Если текст пустой, берем весь текст без последнего аргумента
-        if not msg_text:
-            msg_text = " ".join(args[:-1])
-        
-        # Парсим интервал (поддержка форматов: секунды, 1ч, 30м, 1ч30м)
-        try:
-            # Пробуем как число (секунды)
-            delay_seconds = float(delay_str)
-        except ValueError:
-            # Парсим формат времени (1ч, 30м, 1ч30м)
-            delay_seconds = parse_time_interval(delay_str)
-        
-        if delay_seconds < 1:
-            delay_seconds = 60  # Минимум 1 секунда
-        
-        # Получаем список чатов из сохраненного файла
-        if not hasattr(message.bot, "_user_chats"):
-            message.bot._user_chats = {}
-        
-        if user_id not in message.bot._user_chats:
-            await message.answer("❌ Сначала загрузите список чатов через .чаты")
-            return
-        
-        chat_usernames = message.bot._user_chats[user_id]
-        chat_ids = await session_manager.get_chat_ids_from_usernames(user_id, chat_usernames)
-        
-        if not chat_ids:
-            await message.answer("❌ Не удалось получить ID чатов")
-            return
-        
-        # Форматируем интервал для отображения
-        delay_display = format_time_interval(delay_seconds)
-        
-        await message.answer(
-            f"⏳ Отправляю сообщение в {len(chat_ids)} чатов...\n"
-            f"⏱ Интервал между сообщениями: {delay_display}"
-        )
-        
-        success, failed, errors = await session_manager.send_message_to_chats(
-            user_id, msg_text, chat_ids, delay=delay_seconds
-        )
-        
-        result = (
-            f"✅ <b>Рассылка завершена!</b>\n\n"
-            f"✅ Успешно: {success}\n"
-            f"❌ Ошибок: {failed}\n"
-            f"⏱ Интервал: {delay_display}"
-        )
-        
-        if errors and len(errors) <= 5:
-            result += "\n\n<b>Ошибки:</b>\n" + "\n".join(errors[:5])
-        
-        await message.answer(result, parse_mode=ParseMode.HTML)
-        await state.clear()
-        return
-
-
-# Обработчик прямого ввода API ID (должен быть ПОСЛЕ обработчика команд)
-# Этот обработчик срабатывает только если нет активного состояния
-# Проверяем состояние внутри обработчика, чтобы не конфликтовать с другими
-@router.message()
-async def session_api_id_direct(message: Message, state: FSMContext):
-    """Обработка прямого ввода API ID"""
-    # Сначала проверяем состояние - если есть активное состояние, пропускаем
-    # Это нужно сделать в самом начале, чтобы не мешать другим обработчикам
-    current_state = await state.get_state()
-    logger.info(f"🔍 session_api_id_direct: состояние={current_state}, текст={message.text}")
-    
-    if current_state:
-        state_str = str(current_state)
-        logger.info(f"🔍 session_api_id_direct: проверка состояния {state_str}")
-        # Пропускаем, если есть любое активное состояние (waiting_api_id, waiting_api_hash, waiting_phone, waiting_code, waiting_password, waiting_session_file)
-        if any(x in state_str for x in [
-            "waiting_api_id", "waiting_api_hash", "waiting_phone", 
-            "waiting_code", "waiting_password", "waiting_session_file"
-        ]):
-            # Другие обработчики с фильтрами состояний обработают сообщение
-            logger.info(f"⏭️ session_api_id_direct: пропускаем, состояние {state_str}")
-            return
-    
-    logger.info(f"🔍 session_api_id_direct вызван: user_id={message.from_user.id}, text={message.text}, chat_type={message.chat.type}")
-    
-    # Быстрая проверка - если это не текст или команда с точкой, выходим
-    if not message.text:
-        logger.info("❌ Нет текста, выходим")
-        return
-    
-    if message.text.startswith("."):
-        logger.info("❌ Команда с точкой, выходим")
-        return
-    
-    # Проверяем, что это число из 6+ цифр
-    text_stripped = message.text.strip()
-    if not re.match(r'^\d{6,}$', text_stripped):
-        logger.info(f"❌ Не число из 6+ цифр: {text_stripped}")
-        return
-    
-    # Если дошли сюда, значит это число и нет активного состояния - обрабатываем
-    
-    # Всегда отвечаем на число, если нет активного состояния
-    logger.info(f"✅ Обработчик прямого ввода API ID вызван для пользователя {message.from_user.id}, текст: {message.text}")
+@router.message(StateFilter(GameStates.waiting_bet_roulette))
+async def handle_bet_roulette_text(message: Message, state: FSMContext):
+    """Обработка текстовой ставки для рулетки"""
     try:
-        api_id = int(text_stripped)
-        await state.update_data(api_id=api_id)
-        await state.set_state(SessionStates.waiting_api_hash)
-        logger.info(f"✅ API ID {api_id} принят, переходим к API Hash")
-        await message.answer(
-            f"✅ API ID: <b>{api_id}</b>\n\n"
-            "Теперь введите ваш <b>API Hash</b> (строка):",
-            parse_mode=ParseMode.HTML
-        )
-    except ValueError as e:
-        logger.error(f"Ошибка парсинга API ID: {e}")
-        pass
-
-
-# Обработка загрузки файла со списком чатов
-@router.message(F.document & F.document.file_name.endswith('.txt'))
-async def handle_chats_file(message: Message, state: FSMContext):
-    """Обработка загрузки .txt файла со списком чатов"""
-    user_id = message.from_user.id
-    
-    try:
-        # Скачиваем файл
-        file = await message.bot.get_file(message.document.file_id)
-        file_path = f"temp_chats_{user_id}.txt"
-        
-        await message.bot.download_file(file.file_path, file_path)
-        
-        await message.answer("⏳ Обрабатываю файл...")
-        
-        # Присоединяемся к чатам и архивируем их
-        success, failed, errors = await session_manager.join_chats_from_file(user_id, file_path)
-        
-        # Сохраняем список username для рассылки
-        with open(file_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-        
-        chat_usernames = []
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            if 't.me/' in line:
-                username = line.split('t.me/')[-1].split('/')[0].split('?')[0]
-                if username:
-                    chat_usernames.append(username)
-        
-        if not hasattr(message.bot, "_user_chats"):
-            message.bot._user_chats = {}
-        message.bot._user_chats[user_id] = chat_usernames
-        
-        # Удаляем временный файл
-        os.remove(file_path)
-        
-        result = (
-            f"✅ <b>Обработка завершена!</b>\n\n"
-            f"✅ Присоединено: {success}\n"
-            f"❌ Ошибок: {failed}\n"
-            f"📋 Всего чатов в списке: {len(chat_usernames)}\n\n"
-            f"Все чаты заархивированы."
-        )
-        
-        if errors and len(errors) <= 5:
-            result += "\n\n<b>Ошибки:</b>\n" + "\n".join(errors[:5])
-        
-        await message.answer(result, parse_mode=ParseMode.HTML)
-        await state.clear()
-        
-    except Exception as e:
-        logger.error(f"Ошибка обработки файла: {e}")
-        await message.answer(f"❌ Ошибка: {str(e)}")
-        await state.clear()
-
-
-# Остальные обработчики сессий
-@router.callback_query(F.data == "session_add")
-async def session_add_start(callback: CallbackQuery, state: FSMContext):
-    """Начало добавления сессии"""
-    await callback.message.edit_text(
-        "🤖 <b>Подключение аккаунта</b>\n\n"
-        "Для работы бота необходимо авторизоваться в ваш аккаунт Telegram.\n\n"
-        "📋 <b>Настройки авторизации:</b>\n"
-        "Для начала введите ваш <b>API ID</b> (число):\n\n"
-        "💡 Получить можно на https://my.telegram.org/apps",
-        parse_mode=ParseMode.HTML
-    )
-    await state.set_state(SessionStates.waiting_api_id)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "session_method_file")
-async def session_method_file(callback: CallbackQuery, state: FSMContext):
-    """Выбор метода - файл сессии"""
-    await callback.message.edit_text(
-        "📁 <b>Загрузка файла сессии</b>\n\n"
-        "Отправьте файл сессии (<code>.session</code>):",
-        parse_mode=ParseMode.HTML
-    )
-    await state.set_state(SessionStates.waiting_session_file)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "session_method_phone")
-async def session_method_phone(callback: CallbackQuery, state: FSMContext):
-    """Выбор метода - номер телефона"""
-    await callback.message.edit_text(
-        "📱 <b>Авторизация по номеру телефона</b>\n\n"
-        "Введите номер телефона в международном формате:\n"
-        "Например: +79001234567",
-        parse_mode=ParseMode.HTML
-    )
-    await state.set_state(SessionStates.waiting_phone)
-    await callback.answer()
-
-
-# Обработчик кнопок ввода кода
-@router.callback_query(F.data.startswith("code_"))
-async def handle_code_button(callback: CallbackQuery, state: FSMContext):
-    """Обработка нажатий кнопок ввода кода"""
-    data = await state.get_data()
-    code_input = data.get("code_input", "")
-    code_message_id = data.get("code_message_id")
-    
-    button_data = callback.data
-    
-    code_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="1", callback_data="code_1"),
-         InlineKeyboardButton(text="2", callback_data="code_2"),
-         InlineKeyboardButton(text="3", callback_data="code_3")],
-        [InlineKeyboardButton(text="4", callback_data="code_4"),
-         InlineKeyboardButton(text="5", callback_data="code_5"),
-         InlineKeyboardButton(text="6", callback_data="code_6")],
-        [InlineKeyboardButton(text="7", callback_data="code_7"),
-         InlineKeyboardButton(text="8", callback_data="code_8"),
-         InlineKeyboardButton(text="9", callback_data="code_9")],
-        [InlineKeyboardButton(text="< Стереть", callback_data="code_delete"),
-         InlineKeyboardButton(text="0", callback_data="code_0")],
-        [InlineKeyboardButton(text="✅ Отправить", callback_data="code_submit")]
-    ])
-    
-    if button_data == "code_delete":
-        if code_input:
-            code_input = code_input[:-1]
-            await state.update_data(code_input=code_input)
-            await callback.answer()
-            
-            # Обновляем сообщение с кодом
-            code_display = code_input + ('_' * (5 - len(code_input)))
-            if code_message_id:
-                try:
-                    await callback.message.edit_text(
-                        f"✅ Код отправлен в Telegram\n\n"
-                        f"🔑 <b>Введите код:</b> {code_display}\n\n"
-                        f"Код пришел в приложении Telegram.\n"
-                        f"Используйте кнопки ниже для ввода:",
-                        reply_markup=code_keyboard,
-                        parse_mode=ParseMode.HTML
-                    )
-                except:
-                    pass
-        else:
-            await callback.answer("Код пуст")
-        return
-    
-    if button_data == "code_submit":
-        if not code_input or len(code_input) < 5:
-            await callback.answer("❌ Код должен содержать минимум 5 цифр", show_alert=True)
+        bet_amount = int(message.text)
+        if bet_amount < 50:
+            await message.answer("❌ Минимальная ставка: 50 монет")
             return
         
-        await callback.answer()
+        balance = db.get_balance(message.from_user.id)
+        if balance < bet_amount:
+            await message.answer("❌ Недостаточно монет!")
+            return
         
-        # Обновляем сообщение
-        if code_message_id:
-            try:
-                await callback.message.edit_text(
-                    "⏳ Проверяю код...",
-                    parse_mode=ParseMode.HTML
-                )
-            except:
-                pass
-        
-        success, msg = await session_manager.complete_phone_auth(
-            callback.from_user.id, code_input
-        )
-        
-        if success:
-            await callback.message.answer(
-                f"{msg}\n\n"
-                "Теперь вы можете использовать команды для рассылки.",
-                parse_mode=ParseMode.HTML
-            )
-            await state.clear()
-        elif msg == "NEED_PASSWORD":
-            await callback.message.answer(
-                "🔐 <b>Требуется пароль двухфакторной аутентификации</b>\n\n"
-                "Введите пароль:",
-                parse_mode=ParseMode.HTML
-            )
-            await state.set_state(SessionStates.waiting_password)
-            await state.update_data(code=code_input)
-        else:
-            await callback.message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
-            # Отправляем новое сообщение с кнопками
-            code_message = await callback.message.answer(
-                "🔑 <b>Введите код снова:</b> _____\n\n"
-                "Код пришел в приложении Telegram.\n"
-                "Используйте кнопки ниже для ввода:",
-                reply_markup=code_keyboard,
-                parse_mode=ParseMode.HTML
-            )
-            await state.update_data(code_input="", code_message_id=code_message.message_id)
-        return
-    
-    # Добавляем цифру (code_1, code_2, ..., code_9, code_0)
-    if button_data.startswith("code_") and len(button_data) == 6:
-        digit = button_data[-1]
-        if digit.isdigit():
-            code_input += digit
-            await state.update_data(code_input=code_input)
-            await callback.answer()
-            
-            # Обновляем сообщение с кодом
-            code_display = code_input + ('_' * (5 - len(code_input)))
-            if code_message_id:
-                try:
-                    await callback.message.edit_text(
-                        f"✅ Код отправлен в Telegram\n\n"
-                        f"🔑 <b>Введите код:</b> {code_display}\n\n"
-                        f"Код пришел в приложении Telegram.\n"
-                        f"Используйте кнопки ниже для ввода:",
-                        reply_markup=code_keyboard,
-                        parse_mode=ParseMode.HTML
-                    )
-                except:
-                    pass
-            
-            # Если код введен полностью (5 цифр), автоматически отправляем на проверку
-            if len(code_input) >= 5:
-                # Обновляем сообщение
-                if code_message_id:
-                    try:
-                        await callback.message.edit_text(
-                            "⏳ Проверяю код...",
-                            parse_mode=ParseMode.HTML
-                        )
-                    except:
-                        pass
-                
-                success, msg = await session_manager.complete_phone_auth(
-                    callback.from_user.id, code_input
-                )
-                
-                if success:
-                    await callback.message.answer(
-                        f"{msg}\n\n"
-                        "Теперь вы можете использовать команды для рассылки.",
-                        parse_mode=ParseMode.HTML
-                    )
-                    await state.clear()
-                elif msg == "NEED_PASSWORD":
-                    await callback.message.answer(
-                        "🔐 <b>Требуется пароль двухфакторной аутентификации</b>\n\n"
-                        "Введите пароль:",
-                        parse_mode=ParseMode.HTML
-                    )
-                    await state.set_state(SessionStates.waiting_password)
-                    await state.update_data(code=code_input)
-                else:
-                    await callback.message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
-                    # Отправляем новое сообщение с кнопками
-                    code_message = await callback.message.answer(
-                        "🔑 <b>Введите код снова:</b> _____\n\n"
-                        "Код пришел в приложении Telegram.\n"
-                        "Используйте кнопки ниже для ввода:",
-                        reply_markup=code_keyboard,
-                        parse_mode=ParseMode.HTML
-                    )
-                    await state.update_data(code_input="", code_message_id=code_message.message_id)
-        return
-
-
-@router.message(StateFilter(SessionStates.waiting_session_file), F.document)
-async def session_add_file(message: Message, state: FSMContext):
-    """Обработка файла сессии"""
-    try:
+        # Автоматически запускаем игру
         user_id = message.from_user.id
-        data = await state.get_data()
-        api_id = data["api_id"]
-        api_hash = data["api_hash"]
+        db.update_balance(user_id, -bet_amount)
         
-        file = await message.bot.get_file(message.document.file_id)
-        file_path = os.path.join("sessions", f"user_{user_id}.session")
+        dice1 = await message.answer_dice(emoji="🎲")
+        dice2 = await message.answer_dice(emoji="🎲")
+        dice3 = await message.answer_dice(emoji="🎲")
         
-        os.makedirs("sessions", exist_ok=True)
-        await message.bot.download_file(file.file_path, file_path)
+        await asyncio.sleep(4)
         
-        await message.answer("⏳ Подключаюсь к сессии...")
+        val1 = dice1.dice.value
+        val2 = dice2.dice.value
+        val3 = dice3.dice.value
         
-        success, msg = await session_manager.add_session(
-            user_id, api_id, api_hash, file_path
-        )
+        won = (val1 == 6 and val2 == 6 and val3 == 6)
+        emoji_result = f"🎲{val1} 🎲{val2} 🎲{val3}"
         
-        if success:
-            await message.answer(
-                f"{msg}\n\n"
-                "Теперь вы можете использовать команды для рассылки.",
-                parse_mode=ParseMode.HTML
+        if won:
+            win_amount = int(bet_amount * 2.0)
+            db.update_balance(user_id, win_amount)
+            db.record_game(user_id, "roulette", bet_amount, "win", win_amount, emoji_result)
+            db.add_experience(user_id, 10)
+            
+            result_text = (
+                f"🎉🎉🎉 <b>ДЖЕКПОТ! 777!</b> 🎉🎉🎉\n\n"
+                f"🎰 Результат: <b>{val1} {val2} {val3}</b>\n"
+                f"💰 Ставка: {format_number(bet_amount)} монет\n"
+                f"💵 Выигрыш: <b>{format_number(win_amount)} монет</b>\n"
+                f"📈 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
             )
         else:
-            await message.answer(f"❌ <b>Ошибка:</b>\n\n{msg}", parse_mode=ParseMode.HTML)
+            db.record_game(user_id, "roulette", bet_amount, "loss", 0, emoji_result)
+            db.add_experience(user_id, 3)
+            
+            result_text = (
+                f"❌ <b>Не повезло</b>\n\n"
+                f"🎰 Результат: <b>{val1} {val2} {val3}</b>\n"
+                f"💰 Ставка: {format_number(bet_amount)} монет\n"
+                f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
+            )
         
-        await state.clear()
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Играть снова", callback_data="game_roulette")],
+            [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+        ])
         
-    except Exception as e:
-        logger.error(f"Ошибка добавления сессии: {e}")
-        await message.answer(f"❌ Ошибка: {str(e)}")
+        await message.answer(result_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
         await state.clear()
+    except ValueError:
+        await message.answer("❌ Введите число!")
+
+# ============= ЗАПУСК БОТА =============
 
 async def main():
     try:
@@ -874,7 +776,7 @@ async def main():
         )
         dp = Dispatcher(storage=MemoryStorage())
         dp.include_router(router)
-
+        
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("✅ Webhook удален")
         
@@ -882,17 +784,15 @@ async def main():
         
         commands = [
             BotCommand(command="start", description="Запустить бота"),
+            BotCommand(command="balance", description="Проверить баланс"),
         ]
         await bot.set_my_commands(commands)
         
-        logger.info("🤖 Бот запущен!")
+        logger.info("🎰 Бот казино запущен!")
         await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}", exc_info=True)
         raise
-    finally:
-        await session_manager.disconnect_all()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

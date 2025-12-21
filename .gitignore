@@ -1,48 +1,34 @@
-# Environment
-.env
-venv/
-env/
-ENV/
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
 
 # Database
-database.json
 *.db
 *.sqlite
-
-# Sessions
-sessions/
-*.session
+*.sqlite3
 
 # Logs
 *.log
-logs/
 bot.log
+
+# Environment
+.env
+.env.local
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Python
-*.egg-info/
-dist/
-build/
-
-# Node (если будет использоваться)
-node_modules/
-package-lock.json
-
-# Other
-*.bak
-*.tmp
-.cache/
