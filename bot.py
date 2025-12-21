@@ -404,45 +404,48 @@ async def callback_roulette_play(callback: CallbackQuery, state: FSMContext):
         emoji_result = f"🎰 {slot_value}"
         
         if won:
-        win_amount = int(bet_amount * 2.0)
-        db.update_balance(user_id, win_amount)
-        db.record_game(user_id, "roulette", bet_amount, "win", win_amount, emoji_result)
-        db.add_experience(user_id, 10)
+            win_amount = int(bet_amount * 2.0)
+            db.update_balance(user_id, win_amount)
+            db.record_game(user_id, "roulette", bet_amount, "win", win_amount, emoji_result)
+            db.add_experience(user_id, 10)
+            
+            result_text = (
+                f"🎉🎉🎉 <b>ДЖЕКПОТ! 777!</b> 🎉🎉🎉\n\n"
+                f"🎰 Результат: <b>777</b>\n"
+                f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
+                f"💵 Выигрыш: <b>+{format_number(win_amount)} монет</b>\n"
+                f"📈 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
+            )
+        else:
+            db.record_game(user_id, "roulette", bet_amount, "loss", 0, emoji_result)
+            db.add_experience(user_id, 3)
+            
+            result_text = (
+                f"❌ <b>НЕ ПОВЕЗЛО</b>\n\n"
+                f"🎰 Результат: <b>{slot_value}</b>\n"
+                f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
+                f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>\n\n"
+                "💡 <i>Попробуйте еще раз!</i>"
+            )
         
-        result_text = (
-            f"🎉🎉🎉 <b>ДЖЕКПОТ! 777!</b> 🎉🎉🎉\n\n"
-            f"🎰 Результат: <b>777</b>\n"
-            f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
-            f"💵 Выигрыш: <b>+{format_number(win_amount)} монет</b>\n"
-            f"📈 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
-        )
-    else:
-        db.record_game(user_id, "roulette", bet_amount, "loss", 0, emoji_result)
-        db.add_experience(user_id, 3)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Играть снова", callback_data="game_roulette")],
+            [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+        ])
         
-        result_text = (
-            f"❌ <b>НЕ ПОВЕЗЛО</b>\n\n"
-            f"🎰 Результат: <b>{slot_value}</b>\n"
-            f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
-            f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>\n\n"
-            "💡 <i>Попробуйте еще раз!</i>"
+        await bot.send_message(
+            callback.message.chat.id,
+            result_text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
         )
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Играть снова", callback_data="game_roulette")],
-        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
-    ])
-    
-    # Используем bot для отправки сообщения, чтобы callback работал
-    bot = callback.bot
-    await bot.send_message(
-        callback.message.chat.id,
-        result_text,
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML
-    )
-    await state.clear()
-    await callback.answer()
+        await state.clear()
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"Ошибка в рулетке: {e}")
+        await callback.answer("❌ Ошибка! Попробуйте снова.", show_alert=True)
+        # Возвращаем ставку при ошибке
+        db.update_balance(user_id, bet_amount)
 
 @router.callback_query(F.data == "game_guess_number")
 async def callback_game_guess_number(callback: CallbackQuery, state: FSMContext):
