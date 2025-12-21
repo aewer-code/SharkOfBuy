@@ -278,13 +278,18 @@ async def callback_cubes_play(callback: CallbackQuery, state: FSMContext):
     db.update_balance(user_id, -bet_amount)
     
     # Отправляем эмодзи кубика
-    dice_message = await callback.message.answer_dice(emoji="🎲")
-    
-    # Ждем результат
-    await asyncio.sleep(4)
-    
-    # Получаем значение кубика (1-6)
-    dice_value = dice_message.dice.value
+    try:
+        dice_message = await callback.message.answer_dice(emoji="🎲")
+        
+        # Ждем результат
+        await asyncio.sleep(4)
+        
+        # Получаем значение кубика (1-6)
+        dice_value = dice_message.dice.value
+    except Exception as e:
+        logger.error(f"Ошибка при отправке кубика: {e}")
+        await callback.answer("❌ Ошибка! Попробуйте снова.", show_alert=True)
+        return
     
     # Определяем четное или нечетное
     is_even = dice_value % 2 == 0
