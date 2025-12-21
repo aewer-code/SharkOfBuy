@@ -402,8 +402,8 @@ async def callback_roulette_play(callback: CallbackQuery, state: FSMContext):
         won = (slot_value == 64)
         
         emoji_result = f"🎰 {slot_value}"
-    
-    if won:
+        
+        if won:
         win_amount = int(bet_amount * 2.0)
         db.update_balance(user_id, win_amount)
         db.record_game(user_id, "roulette", bet_amount, "win", win_amount, emoji_result)
@@ -613,11 +613,35 @@ async def callback_freespins(callback: CallbackQuery):
     user_id = callback.from_user.id
     balance = db.get_balance(user_id)
     
+    can_freespin = db.can_claim_freespin(user_id)
+    
+    if can_freespin:
+        status_text = "✅ <b>Доступен</b>"
+    else:
+        user = db.get_user(user_id)
+        last_freespin = user.get('last_freespin')
+        if last_freespin:
+            try:
+                last_date = datetime.strptime(last_freespin, "%Y-%m-%d %H:%M:%S")
+                now = datetime.now()
+                time_diff = now - last_date
+                hours_left = 12 - (time_diff.total_seconds() / 3600)
+                if hours_left > 0:
+                    status_text = f"⏳ <b>Доступен через {int(hours_left)} ч. {int((hours_left % 1) * 60)} мин.</b>"
+                else:
+                    status_text = "✅ <b>Доступен</b>"
+            except:
+                status_text = "✅ <b>Доступен</b>"
+        else:
+            status_text = "✅ <b>Доступен</b>"
+    
     text = (
         "🎁 <b>Фриспины</b>\n\n"
         "Бесплатные вращения с маленькими выигрышами!\n"
-        "Используйте фриспины для получения монет.\n\n"
-        f"💰 Ваш баланс: <b>{format_number(balance)} монет</b>\n\n"
+        "Используйте фриспины для получения монет.\n"
+        "<i>Доступно 1 раз в 12 часов</i>\n\n"
+        f"💰 Ваш баланс: <b>{format_number(balance)} монет</b>\n"
+        f"📊 Статус: {status_text}\n\n"
         "Нажмите кнопку для бесплатного вращения:"
     )
     
