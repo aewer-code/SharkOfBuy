@@ -1013,16 +1013,16 @@ async def handle_bet_roulette_text(message: Message, state: FSMContext):
                 result_text = (
                     f"❌ <b>НЕ ПОВЕЗЛО</b>\n\n"
                     f"🎰 Результат: <b>{slot_value}</b>\n"
-                f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
-                f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>\n\n"
-                "💡 <i>Попробуйте еще раз!</i>"
-            )
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Играть снова", callback_data="game_roulette")],
-            [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
-        ])
-        
+                    f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
+                    f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>\n\n"
+                    "💡 <i>Попробуйте еще раз!</i>"
+                )
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Играть снова", callback_data="game_roulette")],
+                [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+            ])
+            
             await bot.send_message(
                 message.chat.id,
                 result_text,
