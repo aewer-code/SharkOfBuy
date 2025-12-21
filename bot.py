@@ -387,26 +387,21 @@ async def callback_roulette_play(callback: CallbackQuery, state: FSMContext):
     # Списываем ставку
     db.update_balance(user_id, -bet_amount)
     
-    # Отправляем 3 эмодзи рулетки (слот-машины)
-    slot1 = await callback.message.answer_dice(emoji="🎰")
-    slot2 = await callback.message.answer_dice(emoji="🎰")
-    slot3 = await callback.message.answer_dice(emoji="🎰")
-    
-    # Ждем результаты
-    await asyncio.sleep(4)
-    
-    # Получаем значения (1-64 для слот-машины)
-    val1 = slot1.dice.value
-    val2 = slot2.dice.value
-    val3 = slot3.dice.value
-    
-    # Проверяем на 777: все три рулетки должны показать максимальное значение (64)
-    # Это очень редкое событие (1/262144 шанс), но для игры сделаем более реалистично:
-    # Если все три >= 60 (очень высокие значения) = выигрыш
-    # Или можно использовать: если сумма >= 180 (среднее 60 на каждую)
-    won = (val1 >= 60 and val2 >= 60 and val3 >= 60)
-    
-    emoji_result = f"🎰{val1} 🎰{val2} 🎰{val3}"
+    # Отправляем одно эмодзи рулетки (слот-машины)
+    try:
+        bot = callback.bot
+        slot_message = await bot.send_dice(callback.message.chat.id, emoji="🎰")
+        
+        # Ждем результат
+        await asyncio.sleep(4)
+        
+        # Получаем значение (1-64 для слот-машины, где 64 = 777)
+        slot_value = slot_message.dice.value
+        
+        # Проверяем на 777: значение должно быть 64
+        won = (slot_value == 64)
+        
+        emoji_result = f"🎰 {slot_value}"
     
     if won:
         win_amount = int(bet_amount * 2.0)
@@ -416,7 +411,7 @@ async def callback_roulette_play(callback: CallbackQuery, state: FSMContext):
         
         result_text = (
             f"🎉🎉🎉 <b>ДЖЕКПОТ! 777!</b> 🎉🎉🎉\n\n"
-            f"🎰 Результат: <b>{val1} {val2} {val3}</b>\n"
+            f"🎰 Результат: <b>777</b>\n"
             f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
             f"💵 Выигрыш: <b>+{format_number(win_amount)} монет</b>\n"
             f"📈 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
@@ -427,7 +422,7 @@ async def callback_roulette_play(callback: CallbackQuery, state: FSMContext):
         
         result_text = (
             f"❌ <b>НЕ ПОВЕЗЛО</b>\n\n"
-            f"🎰 Результат: <b>{val1} {val2} {val3}</b>\n"
+            f"🎰 Результат: <b>{slot_value}</b>\n"
             f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
             f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>\n\n"
             "💡 <i>Попробуйте еще раз!</i>"
@@ -961,18 +956,15 @@ async def handle_bet_roulette_text(message: Message, state: FSMContext):
         
         bot = message.bot
         try:
-            slot1 = await bot.send_dice(message.chat.id, emoji="🎰")
-            slot2 = await bot.send_dice(message.chat.id, emoji="🎰")
-            slot3 = await bot.send_dice(message.chat.id, emoji="🎰")
+            slot_message = await bot.send_dice(message.chat.id, emoji="🎰")
             
             await asyncio.sleep(4)
             
-            val1 = slot1.dice.value
-            val2 = slot2.dice.value
-            val3 = slot3.dice.value
+            slot_value = slot_message.dice.value
             
-            won = (val1 >= 60 and val2 >= 60 and val3 >= 60)
-            emoji_result = f"🎰{val1} 🎰{val2} 🎰{val3}"
+            # Проверяем на 777: значение должно быть 64
+            won = (slot_value == 64)
+            emoji_result = f"🎰 {slot_value}"
             
             if won:
             win_amount = int(bet_amount * 2.0)
@@ -980,20 +972,20 @@ async def handle_bet_roulette_text(message: Message, state: FSMContext):
             db.record_game(user_id, "roulette", bet_amount, "win", win_amount, emoji_result)
             db.add_experience(user_id, 10)
             
-            result_text = (
-                f"🎉🎉🎉 <b>ДЖЕКПОТ! 777!</b> 🎉🎉🎉\n\n"
-                f"🎰 Результат: <b>{val1} {val2} {val3}</b>\n"
-                f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
-                f"💵 Выигрыш: <b>+{format_number(win_amount)} монет</b>\n"
-                f"📈 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
-            )
-        else:
-            db.record_game(user_id, "roulette", bet_amount, "loss", 0, emoji_result)
-            db.add_experience(user_id, 3)
-            
-            result_text = (
-                f"❌ <b>НЕ ПОВЕЗЛО</b>\n\n"
-                f"🎰 Результат: <b>{val1} {val2} {val3}</b>\n"
+                result_text = (
+                    f"🎉🎉🎉 <b>ДЖЕКПОТ! 777!</b> 🎉🎉🎉\n\n"
+                    f"🎰 Результат: <b>777</b>\n"
+                    f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
+                    f"💵 Выигрыш: <b>+{format_number(win_amount)} монет</b>\n"
+                    f"📈 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
+                )
+            else:
+                db.record_game(user_id, "roulette", bet_amount, "loss", 0, emoji_result)
+                db.add_experience(user_id, 3)
+                
+                result_text = (
+                    f"❌ <b>НЕ ПОВЕЗЛО</b>\n\n"
+                    f"🎰 Результат: <b>{slot_value}</b>\n"
                 f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
                 f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>\n\n"
                 "💡 <i>Попробуйте еще раз!</i>"

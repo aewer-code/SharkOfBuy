@@ -41,6 +41,7 @@ class Database:
                 total_bet INTEGER DEFAULT 0,
                 max_win INTEGER DEFAULT 0,
                 last_daily_bonus TEXT,
+                last_freespin TEXT,
                 level INTEGER DEFAULT 1,
                 experience INTEGER DEFAULT 0,
                 inventory TEXT DEFAULT '[]',
@@ -58,7 +59,8 @@ class Database:
             "ALTER TABLE users ADD COLUMN max_win INTEGER DEFAULT 0",
             "ALTER TABLE users ADD COLUMN referrer_id INTEGER",
             "ALTER TABLE users ADD COLUMN referral_earnings INTEGER DEFAULT 0",
-            "ALTER TABLE users ADD COLUMN referrals_count INTEGER DEFAULT 0"
+            "ALTER TABLE users ADD COLUMN referrals_count INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN last_freespin TEXT"
         ]
         
         for migration in migrations:
