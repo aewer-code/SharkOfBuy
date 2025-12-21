@@ -1198,6 +1198,69 @@ async def handle_referral_button(message: Message):
     
     await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
+@router.callback_query(F.data == "referral_stats")
+async def callback_referral_stats(callback: CallbackQuery):
+    """Статистика реферальной системы"""
+    user_id = callback.from_user.id
+    user = db.get_user(user_id)
+    
+    if not user:
+        db.create_user(user_id, callback.from_user.username)
+        user = db.get_user(user_id)
+    
+    referral_earnings = user.get('referral_earnings', 0)
+    referrals_count = user.get('referrals_count', 0)
+    
+    # Получаем детальную статистику рефералов
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    
+    # Количество игр рефералов
+    cursor.execute("""
+        SELECT COUNT(*) as games FROM games g
+        JOIN users u ON g.user_id = u.user_id
+        WHERE u.referrer_id = ?
+    """, (user_id,))
+    row = cursor.fetchone()
+    referral_games = row['games'] if row else 0
+    
+    # Сумма ставок рефералов
+    cursor.execute("""
+        SELECT SUM(g.bet) as total_bet FROM games g
+        JOIN users u ON g.user_id = u.user_id
+        WHERE u.referrer_id = ?
+    """, (user_id,))
+    row = cursor.fetchone()
+    referral_total_bet = row['total_bet'] if row and row['total_bet'] else 0
+    
+    # Сумма выигрышей рефералов
+    cursor.execute("""
+        SELECT SUM(g.win_amount) as total_win FROM games g
+        JOIN users u ON g.user_id = u.user_id
+        WHERE u.referrer_id = ? AND g.result = 'win'
+    """, (user_id,))
+    row = cursor.fetchone()
+    referral_total_win = row['total_win'] if row and row['total_win'] else 0
+    
+    conn.close()
+    
+    text = (
+        "📊 <b>СТАТИСТИКА РЕФЕРАЛЬНОЙ СИСТЕМЫ</b>\n\n"
+        f"👥 Всего рефералов: <b>{referrals_count}</b>\n"
+        f"🎮 Игр сыграно: <b>{referral_games}</b>\n"
+        f"💰 Сумма ставок: <b>{format_number(referral_total_bet)} монет</b>\n"
+        f"💵 Сумма выигрышей: <b>{format_number(referral_total_win)} монет</b>\n"
+        f"💎 Ваш заработок: <b>{format_number(referral_earnings)} монет</b>\n\n"
+        "<i>Комиссия: 10% с каждой ставки рефералов</i>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await callback.answer()
+
 @router.callback_query(F.data == "deposit")
 async def callback_deposit(callback: CallbackQuery):
     """Пополнение баланса"""
