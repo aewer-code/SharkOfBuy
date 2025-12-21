@@ -121,7 +121,7 @@ async def cmd_start(message: Message):
         user = db.get_user(user_id)
         balance = user['balance']
         text = (
-            "🎰 <b>Казино</b>\n\n"
+            "🎰 <b>КАЗИНО</b>\n\n"
             f"💰 Баланс: <b>{format_number(balance)} монет</b>\n"
             f"📊 Уровень: <b>{user['level']}</b>\n"
             f"⭐ Опыт: <b>{user['experience']}/100</b>\n\n"
@@ -150,11 +150,11 @@ async def callback_main_menu(callback: CallbackQuery):
     
     balance = user['balance']
     text = (
-        "🎰 <b>Казино</b>\n\n"
+        "🎰 <b>КАЗИНО</b>\n\n"
         f"💰 Баланс: <b>{format_number(balance)} монет</b>\n"
         f"📊 Уровень: <b>{user['level']}</b>\n"
         f"⭐ Опыт: <b>{user['experience']}/100</b>\n\n"
-        "Выберите действие:"
+        "<i>Выберите действие:</i>"
     )
     await callback.message.edit_text(text, reply_markup=get_main_menu(), parse_mode=ParseMode.HTML)
     await callback.answer()
@@ -266,10 +266,10 @@ async def callback_cubes_play(callback: CallbackQuery, state: FSMContext):
         db.add_experience(user_id, 5)
         
         result_text = (
-            f"🎉 <b>Вы выиграли!</b>\n\n"
-            f"🎲 Выпало: <b>{dice_value}</b> ({'четное' if is_even else 'нечетное'})\n"
-            f"💰 Ставка: {format_number(bet_amount)} монет\n"
-            f"💵 Выигрыш: <b>{format_number(win_amount)} монет</b>\n"
+            f"🎉 <b>ВЫ ВЫИГРАЛИ!</b>\n\n"
+            f"🎲 Выпало: <b>{dice_value}</b> <i>({'четное' if is_even else 'нечетное'})</i>\n"
+            f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
+            f"💵 Выигрыш: <b>+{format_number(win_amount)} монет</b>\n"
             f"📈 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
         )
     else:
@@ -277,9 +277,9 @@ async def callback_cubes_play(callback: CallbackQuery, state: FSMContext):
         db.add_experience(user_id, 2)
         
         result_text = (
-            f"❌ <b>Вы проиграли</b>\n\n"
-            f"🎲 Выпало: <b>{dice_value}</b> ({'четное' if is_even else 'нечетное'})\n"
-            f"💰 Ставка: {format_number(bet_amount)} монет\n"
+            f"❌ <b>ВЫ ПРОИГРАЛИ</b>\n\n"
+            f"🎲 Выпало: <b>{dice_value}</b> <i>({'четное' if is_even else 'нечетное'})</i>\n"
+            f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
             f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
         )
     
@@ -372,8 +372,8 @@ async def callback_roulette_play(callback: CallbackQuery, state: FSMContext):
         result_text = (
             f"🎉🎉🎉 <b>ДЖЕКПОТ! 777!</b> 🎉🎉🎉\n\n"
             f"🎰 Результат: <b>{val1} {val2} {val3}</b>\n"
-            f"💰 Ставка: {format_number(bet_amount)} монет\n"
-            f"💵 Выигрыш: <b>{format_number(win_amount)} монет</b>\n"
+            f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
+            f"💵 Выигрыш: <b>+{format_number(win_amount)} монет</b>\n"
             f"📈 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
         )
     else:
@@ -381,11 +381,11 @@ async def callback_roulette_play(callback: CallbackQuery, state: FSMContext):
         db.add_experience(user_id, 3)
         
         result_text = (
-            f"❌ <b>Не повезло</b>\n\n"
+            f"❌ <b>НЕ ПОВЕЗЛО</b>\n\n"
             f"🎰 Результат: <b>{val1} {val2} {val3}</b>\n"
-            f"💰 Ставка: {format_number(bet_amount)} монет\n"
+            f"💰 Ставка: <b>{format_number(bet_amount)} монет</b>\n"
             f"📉 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>\n\n"
-            "💡 Попробуйте еще раз!"
+            "💡 <i>Попробуйте еще раз!</i>"
         )
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -449,9 +449,9 @@ async def callback_do_freespin(callback: CallbackQuery):
     db.add_experience(user_id, 1)
     
     result_text = (
-        f"🎁 <b>Фриспин завершен!</b>\n\n"
+        f"🎁 <b>ФРИСПИН ЗАВЕРШЕН!</b>\n\n"
         f"🎰 Результат: <b>{slot_value}</b>\n"
-        f"💵 Выигрыш: <b>{format_number(win_amount)} монет</b>\n"
+        f"💵 Выигрыш: <b>+{format_number(win_amount)} монет</b>\n"
         f"📈 Новый баланс: <b>{format_number(db.get_balance(user_id))} монет</b>"
     )
     

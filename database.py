@@ -44,6 +44,13 @@ class Database:
             )
         """)
         
+        # Миграция: добавляем колонку total_bet, если её нет
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN total_bet INTEGER DEFAULT 0")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Колонка уже существует
+        
         # Таблица игр (история)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS games (
@@ -167,16 +174,16 @@ class Database:
             cursor.execute("""
                 UPDATE users 
                 SET total_wins = total_wins + 1,
-                    total_bet = total_bet + bet
+                    total_bet = total_bet + ?
                 WHERE user_id = ?
-            """, (user_id,))
+            """, (bet, user_id))
         else:
             cursor.execute("""
                 UPDATE users 
                 SET total_losses = total_losses + 1,
-                    total_bet = total_bet + bet
+                    total_bet = total_bet + ?
                 WHERE user_id = ?
-            """, (user_id,))
+            """, (bet, user_id))
         
         # Записываем игру
         cursor.execute("""
