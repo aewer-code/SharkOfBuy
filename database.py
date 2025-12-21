@@ -275,6 +275,11 @@ class Database:
                     total_bet = total_bet + ?
                 WHERE user_id = ?
             """, (bet, user_id))
+            
+            # Начисляем реферальную комиссию (10% с проигрыша тоже)
+            if referrer_id:
+                commission = int(bet * 0.10)
+                self.add_referral_earnings(referrer_id, commission)
         
         # Записываем игру
         cursor.execute("""
