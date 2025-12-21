@@ -959,18 +959,19 @@ async def handle_bet_roulette_text(message: Message, state: FSMContext):
         user_id = message.from_user.id
         db.update_balance(user_id, -bet_amount)
         
-        dice1 = await message.answer_dice(emoji="🎲")
-        dice2 = await message.answer_dice(emoji="🎲")
-        dice3 = await message.answer_dice(emoji="🎲")
+        bot = message.bot
+        slot1 = await bot.send_dice(message.chat.id, emoji="🎰")
+        slot2 = await bot.send_dice(message.chat.id, emoji="🎰")
+        slot3 = await bot.send_dice(message.chat.id, emoji="🎰")
         
         await asyncio.sleep(4)
         
-        val1 = dice1.dice.value
-        val2 = dice2.dice.value
-        val3 = dice3.dice.value
+        val1 = slot1.dice.value
+        val2 = slot2.dice.value
+        val3 = slot3.dice.value
         
-        won = (val1 == 6 and val2 == 6 and val3 == 6)
-        emoji_result = f"🎲{val1} 🎲{val2} 🎲{val3}"
+        won = (val1 >= 60 and val2 >= 60 and val3 >= 60)
+        emoji_result = f"🎰{val1} 🎰{val2} 🎰{val3}"
         
         if won:
             win_amount = int(bet_amount * 2.0)
